@@ -1,0 +1,21 @@
+table,issue,rows_found,rows_expected,match,handling_rule
+fulfilment,3.4.3 orphan payment_id,140,140,True,dropped
+disputes,3.5.3 orphan payment_id,35,35,True,dropped
+transactions,3.1.1 duplicate payment_id,12,12,True,dropped later-created_at row
+customers,3.2.4 duplicate customer_id,10,10,True,dropped lower-lifetime_orders row
+disputes,3.5.2 duplicate payment_id,6,6,True,dropped later-raised_at row
+transactions,3.1.2 non-standard ip_state,360,360,True,normalised to 2-letter code
+transactions,3.1.3 empty device_id,60,60,True,"set to NA, row kept"
+transactions,3.1.4 non-positive amount,8,8,True,"flagged exclude_from_modelling, row kept"
+transactions,3.1.5 out-of-window created_at,3,3,True,"flagged exclude_from_modelling, row kept"
+transactions,3.1.6 negative checkout_latency_ms,12,12,True,clipped to 0
+transactions,3.1.7 implausible retry_count,5,5,True,"capped at 10, raw kept"
+customers,3.2.3 negative account_age_days,6,6,True,clipped to 0
+customers,3.2.2 empty email_domain_type,15,15,True,set to 'unknown' 4th category
+disputes,3.5.4 missing reason_code,5,5,True,set to 'unclassified'
+disputes,3.5.5 raised_at < created_at,12,12,True,"raised_at nulled, dispute still labels"
+fulfilment,3.4.2 delivered but no delivered_at,330,330,True,"flagged only, not repaired"
+fulfilment,3.4.1 delivered_at < shipped_at,790,790,True,both timestamps nulled
+fulfilment,"3.4.4 address score out of [0,1]",25,25,True,"clipped to [0,1]"
+merchants,3.3.1 SLA on non-physical category,2,2,True,"left as-is, flagged"
+merchants,3.3.2 refund_window_days == 0,1,1,True,"left as-is, noted"

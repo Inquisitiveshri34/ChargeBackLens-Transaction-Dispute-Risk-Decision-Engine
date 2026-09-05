@@ -1,0 +1,9 @@
+param,value
+dispute_fee,1500.0
+ops_review_cost,300.0
+merchant_margin,0.18
+step_up_abandon_rate,0.25
+threshold_allow_stepup,0.0244250300855189
+threshold_stepup_review,0.0823954944078569
+net_savings_inr_at_policy,1199620.1860000002
+do_nothing_cost_inr,3069546.780000002

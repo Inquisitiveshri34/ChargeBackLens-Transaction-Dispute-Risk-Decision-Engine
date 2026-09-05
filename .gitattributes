@@ -1,0 +1,34 @@
+# ============================================================
+# Line endings
+# ============================================================
+
+* text=auto
+
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.csv text eol=lf
+
+# ============================================================
+# Jupyter notebooks
+# ============================================================
+
+*.ipynb text eol=lf
+
+# ============================================================
+# Binary files
+# ============================================================
+
+*.joblib binary
+*.pkl binary
+*.pickle binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary

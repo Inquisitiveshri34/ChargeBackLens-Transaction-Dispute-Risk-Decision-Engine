@@ -1,0 +1,8 @@
+key,value
+selected_model,LR_plain
+calibration_method,sigmoid
+calibration_cut,2026-06-24 09:16:28
+split_date,2026-08-01
+random_seed,42
+sklearn_version,1.7.2
+n_features,26

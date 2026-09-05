@@ -1,0 +1,47 @@
+feature_name,knowability,model_role,source_table,rationale
+payment_id,instant,meta,transactions,"join key, never a feature"
+created_at,instant,meta,transactions,"split key only, dropped before fitting"
+amount,instant,meta,transactions,kept raw for the economics layer; log_amount is the modelled form
+is_disputed,n/a,label,disputes,target
+log_amount,instant,numeric,transactions,log1p(amount); EDA 2.5 skew 6.50 -> 0.30
+amount_vs_merchant_avg_ratio,instant,numeric,txn x merchant,amount / merchants.avg_ticket_size (static attribute)
+hour_of_day,instant,numeric,created_at,
+day_of_week,instant,numeric,created_at,
+is_night_txn,instant,numeric,created_at,"hour in [0,6)"
+retry_count,instant,numeric,transactions,capped at 10 in notebook 1; retry_count_raw kept for EDA only
+checkout_latency_ms,instant,numeric,transactions,negatives clipped to 0 in notebook 1
+is_foreign_bin,instant,numeric,transactions,"EDA 2.4: binary, not per-country — foreign samples too thin"
+is_first_txn_for_device,instant,numeric,transactions,device-first-seen is knowable at auth
+account_age_days_at_txn,instant,numeric,customers,snapshot age minus days from created_at to 2026-11-01
+account_age_implausible,instant,numeric,customers,1 where the back-calculation goes negative — generator artifact flag
+refund_window_days,instant,numeric,merchants,static; 1 subscription merchant at 0 per spec 3.3.2
+delivery_sla_days_filled,instant,numeric,merchants,structural nulls filled 0; is_physical_goods disambiguates
+is_physical_goods,instant,numeric,merchants,"from delivery_sla_days.notna(), never from category — spec 3.3.1"
+phone_verified,instant,numeric,customers,EDA 2.6: 6.3x spread
+method,instant,categorical,transactions,EDA 2.3: 5.9x spread
+merchant_category,instant,categorical,merchants,EDA 2.3: 2.6x spread
+email_domain_type,instant,categorical,customers,EDA 2.6: 12x spread — strongest instant feature found
+txns_last_24h,trailing,numeric,transactions,"customer velocity, closed='left'"
+txns_last_7d,trailing,numeric,transactions,"customer velocity, closed='left'"
+distinct_devices_30d,trailing,numeric,transactions,null device_id counted as no device — spec 3.1.3
+prior_disputes_before_this_txn,trailing,numeric,disputes,counts disputes by raised_at < created_at; never reads customers.prior_disputes
+amount_vs_own_avg,trailing,numeric,transactions,amount / trailing 30d mean of the customer's prior amounts
+has_prior_history,trailing,numeric,transactions,disambiguates a genuine 0 from 'no history to measure'
+ip_state_changed_from_prev_txn,trailing,numeric,transactions,SUBSTITUTE for ip_billing_state_mismatch — see rationale below
+merchant_dispute_rate_trailing_90d,trailing,numeric,disputes,"numerator by raised_at, denominator by created_at, current day excluded"
+delivery_status,forbidden,excluded,fulfilment,"EDA 2.7: 3.1x signal, knowable only weeks after the decision point"
+delivered_at,forbidden,excluded,fulfilment,post-decision timestamp
+shipped_at,forbidden,excluded,fulfilment,post-decision timestamp
+tracking_available,forbidden,excluded,fulfilment,post-decision
+address_completeness_score,forbidden,excluded,fulfilment,post-decision
+dispute_raised_at,forbidden,excluded,disputes,derived from the label
+dispute_reason_code,forbidden,excluded,disputes,derived from the label
+disputed_amount,forbidden,excluded,disputes,derived from the label
+prior_disputes,forbidden,excluded,customers,stale snapshot — spec 3.2.1; recomputed time-gated instead
+account_age_days,forbidden,excluded,customers,"measured as-of 2026-11-01, not as-of created_at; correlated with the split key. LLD 4.3 tagged this 'instant, safe' — that tag is wrong and is corrected here"
+lifetime_orders,forbidden,excluded,customers,whole-window aggregate; includes orders placed after created_at
+avg_order_value,forbidden,excluded,customers,whole-window aggregate; same reason
+ip_billing_state_mismatch,instant,excluded,n/a,NOT BUILDABLE: no billing-state column exists in any table. Substituted by ip_state_changed_from_prev_txn. Log as BLK-002.
+ip_state,instant,excluded,transactions,EDA 2.4: flat across all high-volume states; not one-hot encoded
+issuer_bank,instant,excluded,transactions,"high cardinality, 53% structurally null, never charted in EDA — no evidence to justify an encoder slot"
+retry_count_raw,instant,excluded,transactions,uncapped; EDA-only per notebook 1 note 1
