@@ -9,7 +9,7 @@
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-ML-F7931E?logo=scikit-learn)](https://scikit-learn.org/)
 [![Plotly](https://img.shields.io/badge/Plotly-Visualization-3F4F75?logo=plotly)](https://plotly.com/python/)
 
-**Live Demo:** [Coming Soon — Deployed Link](#)
+**Live Demo:** [https://chargebacklens-transaction-dispute-risk-decision-engine.streamlit.app/](https://chargebacklens-transaction-dispute-risk-decision-engine.streamlit.app/)
 
 ---
 
@@ -1246,7 +1246,7 @@ The Streamlit application is intended to be deployed as a lightweight demo appli
 
 ### Live application
 
-**[Deploying Soon — Live Demo](#)**
+**[https://chargebacklens-transaction-dispute-risk-decision-engine.streamlit.app/](https://chargebacklens-transaction-dispute-risk-decision-engine.streamlit.app/)**
 
 The deployed application will expose the current Streamlit interface:
 
@@ -1346,4 +1346,4 @@ A useful system must connect model confidence to operational capacity, customer 
 
 **Deployment:** 🟡 Preparing public deployment
 
-**Demo:** [Coming Soon — Deployed Link](#)
+**Demo:** [https://chargebacklens-transaction-dispute-risk-decision-engine.streamlit.app/](https://chargebacklens-transaction-dispute-risk-decision-engine.streamlit.app/)
