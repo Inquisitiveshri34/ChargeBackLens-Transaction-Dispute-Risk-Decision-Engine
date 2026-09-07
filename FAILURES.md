@@ -256,7 +256,85 @@ That standard deviation is why `04_feature_importances.csv` carries an `informat
 
 ---
 
-## 6. The smaller entries
+## 6. Four deployment failures, each of which hid the next
+
+**Where:** Streamlit Community Cloud · **Severity:** High — the app was unreachable for the duration · **Status:** Resolved; `BLK-010` through `BLK-013`
+
+### What was observed
+
+The pipeline was complete and the app compiled and ran locally. Deployed, it failed four times in succession, each failure only becoming visible once the previous one was cleared:
+
+| | Symptom | Surface |
+|---|---|---|
+| BLK-010 | `AttributeError: module 'economics' has no attribute 'load_economics_basis'` | Tab 3, on first render |
+| BLK-011 | `AttributeError` on `self._fill_dtype` inside `SimpleImputer.transform` | Tab 1, on first score |
+| BLK-012 | `scikit-learn==1.7.2` unresolvable on the deployment interpreter | Install, after pinning |
+| BLK-013 | `ValueError: could not convert string to float` in `_describe` | Tab 2, on first row selection |
+
+**Not one of these reproduces locally.** Three are properties of the deployment environment; the fourth is a code path the local session never exercised.
+
+### Root causes
+
+**BLK-010 — a mixed-commit process.** The traceback named `streamlit_app.py` lines 89–90 and 384, which match commit `724c8b2`. But `git show f8a572e:app/economics.py | grep -c "def load_economics_basis"` returns **0**, and `f8a572e`'s `streamlit_app.py` has CSS at lines 88–91. So the running container held the *new* entry script and the *old* `economics` module simultaneously — a state no single commit can produce.
+
+The mechanism: Streamlit re-executes the entry script from disk on every rerun, so `streamlit_app.py` updated the moment Cloud pulled the new commit. `import economics` does not re-read anything; it returns `sys.modules["economics"]`, populated once at process start, back when the disk still held `f8a572e`. **Cloud's auto-redeploy is a rerun, not a restart.**
+
+**BLK-011 — the pickle outran its library.** `04_model_card.csv` records `sklearn_version,1.7.2`. `requirements.txt` pinned nothing, so Cloud installed the current release, whose `SimpleImputer.transform` reads a `self._fill_dtype` attribute that 1.7.2 never set at fit time.
+
+**The boot contract passed.** `assert_model_contract` verified `n_features`, `feature_names_in_` and `n_features_in_` against the loaded object and found no drift — because there was none. The object unpickled structurally intact and broke only when it transformed. The contract checks the model against the column list; **nothing checked the runtime against the model.**
+
+**BLK-012 — the Python version is not in the repo.** Streamlit Community Cloud reads neither `runtime.txt` (a Heroku convention) nor `.python-version` (a pyenv one). The version comes from a dropdown in the deploy dialog, and per Streamlit's own docs, **an already-deployed app must be deleted and redeployed to change it.** The app was on 3.14, which has no wheels for sklearn 1.7.2, so the correct pin could not install until the app was recreated on 3.12.
+
+**BLK-013 — one function, two callers, one contract tested.** `_describe(feature, level, raw_value)` is called from both tabs. Tab 1 goes through `top_drivers`, which parses `cat__email_domain_type_personal` into a `(feature, level)` pair, so `level` is a real string and the function returns at its first branch. Tab 2 has no design row to decompose, passes `level=None` and the row's raw value, and falls through to the numeric tail — where `float("personal")` raises.
+
+This was not a rare row. Of the eight informative features in `04_feature_importances.csv`, **three are categorical strings** — `email_domain_type` (rank 2), `merchant_category` (rank 4), `method` (rank 5) — all three present in `05_scored_test_sample.csv`, all three surviving the `dropna`. **Every row selection in the Review Queue hit it.**
+
+### The fixes
+
+| | Fix |
+|---|---|
+| BLK-010 | Reboot, not rerun. Any change to `economics.py`, `scoring.py`, `explain.py` or `requirements.txt` now requires an explicit reboot. |
+| BLK-011 | `scikit-learn==1.7.2` pinned in `requirements.txt`, sourced from `04_model_card.csv` rather than from a shell that turned out not to be the training environment. |
+| BLK-012 | App deleted and redeployed on Python 3.12 with secrets re-entered. `.python-version` retained for local pyenv use, with a README note that it does **not** control the deployment. |
+| BLK-013 | `_describe` returns `f"{label} = {raw_value}"` for string values, and wraps the numeric coercion in `try/except (TypeError, ValueError)` — which also covers `pd.NA`, missed by the existing `isinstance(raw_value, float)` NaN guard. |
+
+A driver list that raised `ValueError` now reads `Log amount (Rs 27,623)` · `Email domain type = personal` · `Phone verified: no` · `Merchant category = travel` — the same phrasing Tab 1 produces for those terms, which was the function's stated purpose.
+
+### What was rejected, and why
+
+- **Re-fitting the model under the current sklearn** to make BLK-011 go away. Faster than pinning, and it would have silently invalidated every figure in `METRICS.md`, all of which trace to the 1.7.2 artifacts.
+- **Loosening `_describe` to `str(raw_value)` for everything.** Would have fixed the traceback and thrown away the unit formatting — `log_amount` reads as `10.23` rather than `Rs 27,623`, which is the exact "decode an encoding" failure the function exists to prevent.
+- **Catching the exception at the Tab 2 call site.** Would have left the shared function broken for the next caller.
+
+### What it cost
+
+| Failure | Cost |
+|---|---|
+| BLK-010 | […] — most of it spent eliminating repo-side explanations that were all clean |
+| BLK-011 | […] |
+| BLK-012 | […] plus a full delete-and-redeploy cycle |
+| BLK-013 | […] |
+
+The serial structure was the real expense: each failure sat behind the previous one, so four causes could only be diagnosed in sequence, at one reboot or redeploy each.
+
+### The lesson
+
+**§9 of this file observes that the failures that mattered raised no exceptions. This section is the counterexample, and it does not contradict the claim — it sharpens it.** All four of these were loud, and they were still expensive, because a redacted cloud traceback gives you a type and a line and nothing else. What made them costly was not silence but *serialisation*: a loud failure still hides everything behind it.
+
+The generalising form: **every one of these four was a verified component diverging from the copy actually executing.** Verified module vs. imported module. Fitted library vs. installed library. Declared interpreter vs. selected interpreter. Tested call path vs. shipped call path. The project's round-trip discipline — export a CSV, read it back, verify — was applied rigorously to data artifacts and not at all to the runtime.
+
+The concrete extension is the same shape as the existing artifact contract, one layer out:
+
+```python
+if sklearn.__version__ != ART["card"].get("sklearn_version"):
+    st.warning(...)
+```
+
+That check would have caught BLK-011 at boot rather than at `predict_proba`, and it is the only part of the runtime the contract still does not cover.
+
+---
+
+## 7. The smaller entries
 
 Logged in full in `blockers.md`. Included here because the file's stated policy is that a five-minute library bug is worth a minute of writing down.
 
@@ -273,7 +351,7 @@ The general shape is worth remembering more than the specific fix: **two noteboo
 
 ---
 
-## 7. Still open
+## 8. Still open
 
 Named here rather than closed, because an open item that is written down is cheaper than one that is rediscovered.
 
@@ -284,10 +362,12 @@ Named here rather than closed, because an open item that is written down is chea
 | **`04_model_card.csv` does not record the fitted `C`** or the winning HGB configuration. Both exist in cell output and `04_hgb_search_results.csv`, but the card is the file a reader checks. | Two rows to add. |
 | **The train/test gap table is computed outside any notebook cell.** It is quoted in `METRICS.md` §8 and traces to an exported CSV, but has no printing cell. | Against the project's own traceability rule. One cell to add. |
 | **The design documents still describe the superseded approach.** The LLD and dev plan still specify `class_weight='balanced'`, isotonic calibration with `cv=3`, and `.feature_importances_`. | **A clean re-run from those documents would reintroduce all three failures in §1–§3.** They should be amended before anyone re-runs the pipeline from the specs rather than from the notebooks. |
+| **`04_model_card.csv` records `sklearn_version` but not `numpy` or `pandas`.** The pickle carries numpy dtypes, so numpy is a second compatibility surface with no recorded ground truth. Notebook 4's version-print cell has the values. | Two rows to add, same fix as the missing `C`. |
+| **`_describe`'s two callers still have unwritten contracts.** Tab 1 supplies a parsed level; Tab 2 supplies a raw value. The function now handles both, but nothing documents that it must. | A docstring line, or a two-case unit test. |
 
 ---
 
-## 8. What this file is actually evidence of
+## 9. What this file is actually evidence of
 
 Four things, in order of how much they matter:
 
