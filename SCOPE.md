@@ -1,444 +1,142 @@
-# ChargebackLens — Scope
+# SCOPE.md — what ChargebackLens is, and what it deliberately is not
 
-## 1. Problem statement
+**Project:** ChargebackLens — calibrated chargeback-risk scoring and rupee-denominated routing for Indian payment transactions
+**Track:** Razorpay AI Buildathon — Track 02, AI Risk Manager
+**Companion documents:** `chargebacklens_hld.md` §2 and §9 (where these boundaries were first set), `METRICS.md` (what was measured), `FAILURES.md` (what broke), `README.md` (how to run it)
 
-A merchant on a payments platform loses money to chargebacks in three ways at once: the disputed transaction amount, a fixed dispute fee charged regardless of outcome, and the operational cost of responding to the case. A plain fraud classifier only addresses the first of these, and it ignores the fact that **blocking a legitimate customer also costs money** — a customer forced into a step-up verification has some probability of abandoning the purchase entirely.
-
-**ChargebackLens exists to answer one question a merchant actually has:** given a transaction, what is the rupee-optimal action — allow it, step it up, or send it to manual review — and how confident should the merchant be in that recommendation?
-
-This reframes the project from "build an accurate classifier" to "build a system that converts a probability into a bounded, explainable, economically-justified decision."
+This document exists so that a reader can tell, without reading code, exactly what this system claims to do, what it refuses to do, and where the line between those two sits. Some of the boundaries below are ordinary product scoping. One of them — §3 — is a hard architectural boundary that governs what may ever be added to this repository.
 
 ---
 
-## 2. Objectives
+## 1. The problem, stated once
 
-### 2.1 Calibrated dispute-risk probability
+A merchant on a payments platform loses money to a chargeback in three places at once: the disputed amount itself, a fixed dispute fee charged regardless of who wins, and the operational cost of assembling a response. A fraud classifier addresses only the first, and it ignores the other half of the ledger entirely — **stopping a legitimate customer also costs money**, because a customer pushed into an additional verification step has a real probability of simply abandoning the purchase.
 
-Produce a calibrated probability of dispute risk and evaluate it honestly on data the model has not seen during training.
+ChargebackLens answers the question a merchant actually has:
 
-The model output is intended to be a probability, not merely a ranking score, because the downstream economics layer consumes the magnitude of that probability.
+> Given this transaction, what is the rupee-optimal action — **allow it, step it up, or send it to manual review** — and how much confidence does that recommendation deserve?
 
-### 2.2 Rupee-denominated decision layer
+That reframing, from "build an accurate classifier" to "convert a probability into a bounded, explainable, economically-justified decision," is what every scope decision below follows from.
 
-Place a decision layer on top of the calibrated probability.
+---
 
-The current policy has three operational actions:
+## 2. In scope
 
-| Risk band | Action |
+| Capability | What it means concretely |
 |---|---|
-| Low risk | **Allow** |
-| Medium risk | **Step-up** |
-| High risk | **Manual Review** |
-
-The policy is driven by two thresholds and evaluated using explicit economic assumptions.
-
-### 2.3 Reviewer-facing application
-
-Provide a Streamlit demo surface that allows a reviewer to:
-
-- Understand what ChargebackLens does
-- Browse a risk-ranked transaction queue
-- Inspect transaction-level risk information
-- Explore the economic consequences of policy assumptions
-- Access the planned transaction-scoring surface
-
-The current application navigation is:
-
-```text
-Home
-│
-├── Risk Queue
-├── Economics
-└── Score Transaction
-      └── Under Development
-```
-
-The live transaction-scoring interface is the next development stage.
-
-### 2.4 Narrow LLM explanation layer
-
-Use an LLM only for one bounded explanatory task: generating a short factual reviewer note from an already-computed decision and its relevant risk signals.
-
-The LLM does **not** determine:
-
-- Risk probability
-- Features
-- Thresholds
-- Economic optimization
-- Operational classification
-
-A deterministic offline fallback is maintained so the core application does not depend on an external API.
+| **Calibrated dispute probability** | A probability that can be multiplied by a rupee amount and still mean something. Calibration is a required step, not an optional improvement — see §4. |
+| **Honest held-out evaluation** | A temporal train/test split, metrics chosen for a 0.9% base rate, and a comparison table containing the models that lost. |
+| **A rupee decision layer** | Expected cost under each of the four outcomes, a threshold sweep, two jointly-optimised operating thresholds, and a sensitivity analysis over the cost assumptions. |
+| **Segment-level economics** | Per-segment returns under the single policy that would actually ship, including segments where an intervention **loses** money and should not be deployed. |
+| **A demo surface** | A three-tab Streamlit app: score a transaction, browse a risk-ranked queue, move the economics assumptions and watch the optimum move. |
+| **A narrow LLM use** | One bounded text-generation task — a short reviewer note — with a fully offline deterministic fallback. |
 
 ---
 
-## 3. Data scope
+## 3. The defense-only boundary — a hard architectural constraint
 
-ChargebackLens operates on five fixed, pre-generated CSV inputs:
+**This is not a coding guideline. It is a boundary on what may exist in this repository.**
 
-```text
-transactions.csv
-customers.csv
-merchants.csv
-fulfilment.csv
-disputes.csv
-```
+ChargebackLens produces a **defensive** signal: a risk score and a recommended action for the party defending against disputes. It does not contain, and must not be extended to contain, any component whose purpose or effect is to help a bad actor avoid detection.
 
-The raw CSVs are a **read-only input contract**.
+Concretely, the following are out of scope and will remain out of scope:
 
-No component in the system generates or modifies the raw data.
+- **Evasion testing.** No component that searches for input perturbations which move a transaction from `manual_review` to `allow`.
+- **Adversarial example generation.** No component that constructs synthetic transactions optimised to score low.
+- **Detection-threshold disclosure framed as attacker guidance.** The two operating thresholds are published in `05_economics_params.csv` because a *merchant* configuring their own queue needs them; they are documented as an operating parameter, never as "the number to stay under."
+- **Any inverted use of the explanation layer.** `app/explain.py` explains why a transaction was flagged, to a reviewer. It does not explain how a transaction could have avoided being flagged.
 
-The data pipeline performs:
-
-```text
-Load
-  ↓
-Validate
-  ↓
-Clean / Deduplicate
-  ↓
-Label
-  ↓
-Feature Engineering
-  ↓
-Temporal Split
-  ↓
-Model Training
-  ↓
-Calibration
-  ↓
-Evaluation
-  ↓
-Economics
-  ↓
-Frozen Artifacts
-  ↓
-Streamlit Application
-```
-
-The cleaned master table contains 119,988 rows and 24 columns, with 1,050 positive disputes and a 0.8751% base dispute rate. All 20 defined data-quality checks passed.
+The track's own evaluation bar treats offense-capable functionality as disqualifying. Rather than treat that as a thing to remember at submission time, it was treated as a structural property of the system from the first design document. The practical consequence is that this boundary is easy to audit: there is no module, notebook cell, or app control anywhere in the repository that takes a *desired output* as an input.
 
 ---
 
-## 4. Feature scope
+## 4. Boundaries inherited from the architecture
 
-The model uses features that are knowable at the point of decision.
+These are narrower than §3 but they are real constraints, and each one was chosen for a stated reason rather than arrived at by omission.
 
-This is a first-class constraint because several fields in the source data, particularly fulfilment information such as delivery status and delivery timestamps, are only knowable after the decision window.
+### 4.1 Decision support, not an authorization gate
 
-Feature engineering therefore includes:
+This system evaluates historical transactions and recommends actions. It is **not** wired into a live payments flow and does not authorize, decline, or hold anything. There is no real-time integration, no latency budget for an in-line decision, and no failure-mode design for what happens when the scorer is unavailable mid-transaction — because it is never in the transaction path.
 
-- Instant transaction features
-- Customer-level features
-- Merchant-level features
-- Leakage-safe trailing behavioural features
-- Temporal feature construction
-- Feature knowability tagging
+### 4.2 The raw data is a read-only input contract
 
-The final modelling contract contains **26 features**.
+The five source CSVs are pre-generated and external to the system. **No component writes to `data/raw/`.** Data generation is not part of this project.
 
-A temporal train/test split is used with:
+This constraint had teeth. A specified feature, `ip_billing_state_mismatch`, turned out to be unbuildable because no table in the dataset carries a billing state. Synthesising one would have meant writing to `data/raw/`, so the feature was substituted rather than manufactured (`FAILURES.md` §5, `blockers.md` BLK-002).
 
-```text
-SPLIT_DATE = 2026-08-01
-```
+### 4.3 The offline/online seam
 
-The feature pipeline uses time-gated historical information and explicitly excludes post-decision information.
+Everything expensive, stochastic, or requiring a held-out evaluation runs **offline**, once, in a notebook. Everything interactive runs **online**, in the app, against artifacts the notebook already froze.
 
----
+The app cannot train. The notebooks do not serve requests. The only things that cross the seam are named artifact files. This means "the model" is a fixed, auditable object rather than a moving target that could answer differently depending on when you asked it.
 
-## 5. Modelling scope
+### 4.4 Calibration is upstream of every rupee figure
 
-The modelling phase includes:
+No economics computation may consume a raw model score. A gradient-boosting score ranks transactions correctly but is not a probability, and multiplying a non-probability by a rupee amount produces a cost estimate with no defensible meaning.
 
-- Baseline Logistic Regression
-- HistGradientBoostingClassifier
-- Hyperparameter search
-- Model comparison
-- Model selection
-- Probability calibration
-- Permutation-based feature importance
-- Frozen model artifact export
+This boundary caught a real defect: the prescribed baseline model, fitted with `class_weight='balanced'`, produced probabilities inflated roughly 50× while ranking perfectly well. Every threshold, sweep, and segment figure would have run without error against those numbers (`FAILURES.md` §2).
 
-The final deployed scorer is:
+### 4.5 The LLM does exactly one thing
 
-```text
-Unweighted Logistic Regression
-        +
-Prefit Sigmoid Calibration
-```
+The Anthropic API is called in exactly one place, for one task: turning an already-scored transaction and its already-computed top drivers into a two-to-three sentence reviewer note.
 
-The model is selected using held-out validation evidence rather than complexity as an objective.
+The LLM does **not** score transactions, select thresholds, compute features, or make routing decisions. Those have reproducibility, auditability, and latency requirements that an LLM call cannot cleanly satisfy. A deterministic template stands in whenever `ANTHROPIC_API_KEY` is absent, which means the app's entire core — scoring, queue, economics — has zero external dependencies.
 
-The test set is kept separate from model selection and is used for final evaluation after the modelling decisions are complete.
+### 4.6 No feature may use post-decision information
+
+Every feature carries a knowability tag, written to `03_feature_knowability.csv` **before the first feature was built**, and a permanent assertion checks the assembled matrix against it.
+
+Twelve fields are tagged `forbidden`. The most visible is `delivery_status`: transactions marked `lost` dispute at 2.68% against 0.86% for `delivered`, a 3.1× spread. That signal is real, and it is refused, because it is only knowable weeks after the moment a routing decision has to be made. The EDA chart showing it carries the word FORBIDDEN in its title so that the exclusion reads as a deliberate refusal rather than an oversight.
 
 ---
 
-## 6. Evaluation scope
+## 5. Explicitly out of scope
 
-The evaluation layer reports metrics appropriate to the approximately 0.9% dispute base rate.
-
-Primary metrics include:
-
-- PR-AUC
-- Precision at top 1%
-- Precision at top 5%
-- Lift
-- Brier score
-- Brier skill score
-- Log loss
-- Calibration / reliability
-- Train/test generalization gap
-
-ROC-AUC may be computed diagnostically, but it is deliberately not treated as a headline metric because the extreme class imbalance makes it less informative for the operational problem.
+| Not built | Why |
+|---|---|
+| Real-time payment-gateway integration | §4.1 — this is decision support, not an authorization gate |
+| Data generation or augmentation | §4.2 — raw CSVs are a read-only contract |
+| Automated retraining or drift monitoring | Training is a one-shot, seeded, offline step by design (§4.3) |
+| Any persistence layer beyond flat files | At 120K rows a database adds operational surface without adding capability |
+| Multi-merchant configuration or a settings UI | Out of scope for one iteration; the economics parameters are exposed as sliders instead |
+| Authentication on the Streamlit app | It is a demo surface reading frozen public artifacts, not a multi-user product |
+| SHAP explanations as a hard requirement | Shipping a logistic regression made real coefficient-based contributions available, which is better than a SHAP approximation and cheaper than SHAP itself |
+| Any offense-capable component | §3 — hard boundary |
 
 ---
 
-## 7. Economics scope
+## 6. Limits on what the results claim
 
-The economics layer converts calibrated probabilities into operational decisions and evaluates their financial consequences.
+Scope is also about the strength of the claim, not only the size of the feature set. Four limits apply to every number in `METRICS.md`, and they are stated there next to the figures rather than in a footnote.
 
-The baseline economic assumptions are:
+1. **The data is synthetic.** Several findings are properties of the generator, not of Indian payments — most clearly that `ip_state` is assigned per transaction with no customer-level home state, which makes one engineered feature structurally incapable of carrying signal.
 
-```text
-Dispute fee             = ₹1,500
-Operations review cost  = ₹300
-Merchant margin         = 18%
-Step-up abandonment     = 25%
-```
+2. **72.2% of the test label is post-snapshot.** 294 of 407 test positives were raised after the 2026-11-01 snapshot date the data spec declares, with the latest at 2027-01-26. Ranking is unaffected — every feature is time-gated — but the rupee figures are scaled to an exposure a real operator standing on the snapshot date could not yet have observed.
 
-The economics layer includes:
+3. **The economics are a floor, not an estimate.** The deployed model under-predicts in the top decile by 1.15 percentage points, so every savings figure understates rather than overstates.
 
-- Binary threshold sweep
-- Joint optimization of two policy thresholds
-- Allow / Step-up / Manual Review policy
-- Sensitivity analysis
-- Segment-level economics
-- Review-band and step-up-band decomposition
+4. **The conclusion is robust; the operating point is not.** Net savings stay positive across the full sensitivity range, but one threshold moves by a factor of 3.1 depending on a parameter nobody has measured on real data.
 
-The economics layer is downstream of model calibration and does not depend on model internals.
+A version of this project that reported the savings figure without those four lines would be reporting a larger number and a smaller result.
 
 ---
 
-## 8. Application scope
+## 7. Who this is for
 
-The Streamlit application consumes frozen processed artifacts.
+Two roles, deliberately separated so that neither has to run the other's half:
 
-The application is designed to:
-
-- Load the calibrated model once
-- Load read-only application artifacts
-- Display the risk queue
-- Display policy/economic analysis
-- Provide a Home page explaining the system
-- Provide a planned transaction-scoring surface
-
-The application must not retrain the model.
-
-The application must not write to the raw data directory.
-
-The live transaction-scoring page is currently under development and is intentionally not presented as a functioning production scorer.
+- **The analyst** runs the five notebooks, owns the modelling decisions, and produces the artifacts. Everything they need to audit a decision is a CSV that opens in a spreadsheet.
+- **The reviewer** uses the Streamlit app to score a transaction, work a risk-ranked queue, or test how the recommendation changes under different cost assumptions. They never train anything.
 
 ---
 
-## 9. Explanation scope
+## 8. If this moved toward production
 
-The explanation component receives already-computed information and generates a concise reviewer note.
+Named here for completeness, not built:
 
-Its role is:
+- Replace `data/processed/` with a versioned model registry.
+- Replace local CSV reads with a transaction event stream.
+- Measure `step_up_abandon_rate` on real traffic rather than assuming it — `METRICS.md` §7 identifies this as the single highest-value measurement a merchant could make.
+- Add drift monitoring on the score distribution, since the operating thresholds are quantile-derived and would move with it.
 
-```text
-Risk probability
-      +
-Policy decision
-      +
-Relevant risk signals
-      ↓
-Reviewer note
-```
-
-The explanation layer is optional from an infrastructure perspective. If the Anthropic API is unavailable or no API key is present, a deterministic fallback is used.
-
----
-
-## 10. Explicit non-objectives
-
-The following are explicitly outside the scope of ChargebackLens.
-
-### 10.1 Production payment authorization
-
-ChargebackLens is a decision-support system evaluated on historical data.
-
-It is **not** a live production authorization gate.
-
-There is no real-time integration with a live payments system.
-
-### 10.2 Data generation
-
-The five CSVs are fixed, pre-generated inputs.
-
-No component writes to:
-
-```text
-data/raw/
-```
-
-### 10.3 Offensive or evasion functionality
-
-The project does not include:
-
-- Evasion testing
-- Adversarial example generation
-- Detection bypass techniques
-- Functionality that could help a bad actor avoid detection
-
-This is a hard architectural boundary.
-
-### 10.4 Automated production retraining
-
-The project does not currently include:
-
-- Automated model retraining
-- Model registry infrastructure
-- Automated model refresh
-- Production drift-monitoring infrastructure
-
-These are potential future production extensions, not part of the current system.
-
-### 10.5 Full fraud platform
-
-ChargebackLens is specifically scoped to **chargeback/dispute risk**.
-
-It is not intended to become a general-purpose fraud detection platform.
-
-### 10.6 LLM-controlled decisions
-
-The LLM cannot:
-
-- Score transactions
-- Select features
-- Choose thresholds
-- Optimize economics
-- Override the policy
-
-Its responsibility is limited to explanation.
-
----
-
-## 11. Architecture boundary
-
-The project is deliberately split into two phases.
-
-### Offline phase
-
-```text
-Raw CSVs
-   ↓
-Jupyter notebooks
-   ↓
-Training / calibration / evaluation
-   ↓
-Frozen artifacts
-```
-
-### Online phase
-
-```text
-Frozen artifacts
-   ↓
-Streamlit
-   ↓
-Risk Queue / Economics / Transaction Scoring
-   ↓
-Optional reviewer-note generation
-```
-
-The notebook owns training and evaluation.
-
-The application consumes the resulting artifacts.
-
-This separation exists for reproducibility, speed, auditability, and clear separation of responsibilities.
-
----
-
-## 12. Non-functional requirements
-
-### Reproducibility
-
-A single random seed is used throughout the stochastic parts of the modelling pipeline.
-
-```text
-RANDOM_SEED = 42
-```
-
-### Auditability
-
-The project maintains:
-
-- Explicit data-quality checks
-- Feature knowability metadata
-- Temporal split assertions
-- Artifact round-trip checks
-- Model comparison artifacts
-- Threshold and economics artifacts
-- A blockers/failures record
-
-### Application latency
-
-The application must not retrain models or repeatedly process the raw data.
-
-Its normal per-request workload is limited to artifact access, inference, deterministic decision logic, economics calculations, and optionally one external explanation call.
-
-### Graceful degradation
-
-The explanation layer has an offline fallback.
-
-The core risk queue and economics functionality do not depend on the LLM being available.
-
----
-
-## 13. Current implementation boundary
-
-### Implemented
-
-- Data cleaning and validation
-- Label construction
-- Leakage-safe feature engineering
-- Temporal splitting
-- Model training and selection
-- Calibration
-- Final test evaluation
-- Threshold optimization
-- Three-band economics
-- Sensitivity analysis
-- Segment economics
-- Risk Queue
-- Economics application surface
-- Home page
-
-### Under development
-
-- Live transaction scoring
-- Final production-style scoring contract between the feature pipeline and Streamlit
-- Transaction-specific reviewer explanation integrated into the scoring workflow
-
----
-
-## 14. Future boundary
-
-If ChargebackLens is extended toward production, the natural architectural evolution is:
-
-```text
-Versioned Model Registry
-        +
-Feature Service
-        +
-Transaction Event Stream
-        +
-Monitoring
-        +
-Production Policy Controls
-```
-
-The current offline/online separation should remain intact.
-
-The project should grow by replacing the demo-scale artifact interfaces, not by collapsing training, evaluation, and serving back into one application script.
+The offline/online seam in §4.3 would not need to change. Only what sits on either side of it would.

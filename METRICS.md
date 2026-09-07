@@ -1,482 +1,411 @@
-# ChargebackLens — Metrics
+# METRICS.md — every number, and where it comes from
 
-## 1. Evaluation contract
+**Project:** ChargebackLens · Razorpay AI Buildathon, Track 02
+**Companion documents:** `SCOPE.md` (what is and isn't claimed), `FAILURES.md` (what broke and what it cost), `README.md` (how to reproduce)
+**Environment:** `scikit-learn 1.7.2`, `plotly 5.24.1`, `RANDOM_SEED = 42`
 
-The final evaluation uses a temporally separated test set and the deployed probability column:
+**The rule this document follows:** every figure below traces to a specific cell in a specific exported CSV. Nothing is typed from memory, rounded for effect, or reconstructed from a draft. Section 10 is the traceability index — it maps each headline number to the file it was read from, so any claim here can be checked without re-running a notebook.
 
-```text
-proba_calibrated
-```
-
-This is the selected unweighted Logistic Regression model followed by a prefit sigmoid calibration.
-
-The test set contains:
-
-- **45,246 transactions**
-- **407 disputes**
-- **0.8995% dispute base rate**
-
-The final evaluation notebook ran top-to-bottom without error, all 10 definition-of-done checks passed, and all nine output CSVs were exported and round-trip verified.
+**Read §7 before quoting any rupee figure.** Four caveats apply to the economics, all of them measured, all of them exported. They are not disclaimers bolted on at the end; they change how the numbers should be read.
 
 ---
 
-## 2. Headline results
+## 1. The one-screen summary
 
-| Metric | Result |
-|---|---:|
-| Deployed model | **LR_plain + prefit sigmoid** |
-| Features | **26** |
-| Test transactions | **45,246** |
-| Test positives | **407** |
-| Test base rate | **0.8995%** |
-| Test PR-AUC | **0.08725** |
-| PR-AUC lift over base rate | **9.70×** |
-| Precision @ top 1% | **14.60%** |
-| Lift @ top 1% | **16.23×** |
-| Precision @ top 5% | **7.78%** |
-| Recall @ top 5% | **43.24%** |
-| Brier score | **0.008567** |
-| Constant-rate Brier reference | **0.008914** |
-| Brier skill score | **+3.90%** |
-| Log loss | **0.042857** |
-| Maximum calibrated probability | **0.3344** |
-| Expected calibration error | **0.00185** |
-| Net savings at deployed policy | **₹1,199,620** |
-| Do-nothing cost | **₹3,069,547** |
-| Binary-policy net savings | **₹1,080,993** |
-| Three-band improvement | **+₹118,627** |
-| Test positives raised after snapshot | **294 / 407 (72.2%)** |
+| | |
+|---|---|
+| **Deployed model** | Unweighted `LogisticRegression`, 26 features, with a prefit sigmoid calibrator |
+| **Test PR-AUC** | **0.0872** against a 0.8995% base rate — **9.7× the base rate** |
+| **Lift at the top 1% of the queue** | **16.2×** — 66 disputes caught in 452 reviewed |
+| **Precision / recall at the top 5%** | **7.78% / 43.2%** |
+| **Brier skill score** vs. a constant base-rate predictor | **+3.90%** |
+| **Expected calibration error** | **0.00185** across ten deciles |
+| **Cost of allowing every transaction** | **₹30,69,547** |
+| **Net savings under the deployed policy** | **₹11,99,620** — 39.1% of that exposure |
+| **Operating thresholds** | allow/step-up **0.02443** · step-up/review **0.08240** |
+| **Segments where manual review loses money** | **1** — `method = wallet`, at −₹300 |
+| **Share of test positives raised after the snapshot** | **72.2%** — the project's largest caveat (§7.1) |
 
 ---
 
-## 3. Model comparison
+## 2. Data quality
 
-The four probability columns produced during model development are:
+Source: `01_data_quality_log.csv` (20 rows × 6 cols), `data_cleaning_merging.md`
 
-| Probability column | Model | PR-AUC | Lift @ 1% | Precision @ 5% | Brier | Brier skill | Max p |
-|---|---|---:|---:|---:|---:|---:|---:|
-| `proba_baseline` | LR, `class_weight='balanced'` | 0.0842 | 17.2× | 7.69% | 0.1404 | **−14.75** | 0.991 |
-| `proba_main` | Tuned HGB | 0.0812 | 15.5× | 7.21% | 0.0086 | +0.0371 | 0.399 |
-| `proba_selected` | Unweighted LR, uncalibrated | 0.0872 | 16.2× | 7.78% | 0.0085 | +0.0426 | 0.474 |
-| **`proba_calibrated`** | **Unweighted LR + sigmoid** | **0.0872** | **16.2×** | **7.78%** | **0.0086** | **+0.0390** | **0.334** |
+| | |
+|---|---|
+| Raw inputs | transactions 120,000 · customers 35,000 · merchants 60 · fulfilment 66,140 · disputes 1,091 |
+| Master table | **119,988 × 24** (120,000 raw − 12 duplicate `payment_id` rows) |
+| Positive class | **1,050** disputes |
+| **Base dispute rate** | **0.8751%** — inside the spec's declared 0.8–1.0% band |
+| Quality checks failing their expected count | **0 of 20** |
+| Leakage tripwire on the master table | clean — zero forbidden columns present |
 
-The selected and calibrated columns have identical ranking metrics and different probability values. That is the expected signature of the monotone calibration transform.
+**Fourteen cleaning rules were applied, each with a found-vs-expected count.** The notable ones:
 
-The prescribed weighted baseline has good ranking performance but unusable probability scale: its Brier score is 0.1404 against a constant-rate reference of 0.008914, producing a Brier skill score of **−14.75**.
+| Issue | Rows | Handling |
+|---|---:|---|
+| Non-standard `ip_state` strings | 360 | normalised to 2-letter codes — 110 distinct values collapsed to 36 |
+| `delivered_at` earlier than `shipped_at` | 790 | both timestamps nulled, row kept and flagged |
+| `delivered` with a null `delivered_at` | 330 | flagged, not repaired |
+| Empty `device_id` | 60 | field set to `NA`, **row kept** — a customer with a missing device has one fewer known device, not one fewer transaction |
+| Empty `email_domain_type` | 15 | set to `"unknown"` as an explicit fourth category, never folded into a real one |
+| `raised_at` earlier than `created_at` | 12 | timestamp nulled, **dispute still counts for the label** |
+| Non-positive `amount` | 8 | flagged `exclude_from_modelling`, row kept with its `payment_id` printed |
+| Out-of-window `created_at` | 3 | flagged (2019-06-09, 2099-03-17, 2099-11-02) |
+
+**Orphan foreign keys**, which the data spec designs in deliberately: 140 orphan `fulfilment` rows and 35 orphan `disputes` rows logged, dropped, and their counts asserted against the spec.
+
+**One specification error found and reported rather than absorbed.** The data spec states that `issuer_bank` has 62,400 nulls. The file actually has **63,600** — exactly `upi (52,800) + wallet (10,800)`. The structural rule (null on every UPI and wallet row) holds perfectly; the spec's arithmetic does not. Validating the rule instead of the count is what let this pass honestly. The spec line should be corrected.
 
 ---
 
-## 4. Generalization and model selection
+## 3. The dataset and the split
 
-The first prescribed HistGradientBoosting configuration overfit substantially:
+Sources: `03_feature_matrix.csv`, `03_train.csv`, `03_test.csv`, `03_feature_knowability.csv`
 
-| Model | Train PR-AUC | Test PR-AUC | Train/Test ratio |
+| | Rows | Positives | Rate |
 |---|---:|---:|---:|
-| Prescribed HGB | 0.5130 | 0.0517 | **9.9** |
-| Tuned HGB | 0.1055 | 0.0812 | **1.30** |
-| Deployed LR + sigmoid | 0.0705 | 0.0872 | **0.81** |
+| Working set (after 11 flagged exclusions) | 119,977 | 1,050 | 0.8752% |
+| **Train** (`created_at` < 2026-08-01) | 74,731 | 643 | 0.8604% |
+| **Test** (`created_at` ≥ 2026-08-01) | 45,246 | 407 | 0.8995% |
 
-The tuned HGB improved test PR-AUC from **0.0517 to 0.0812**, but remained below the selected Logistic Regression model at **0.0872**.
+Within train, three further disjoint temporal blocks were used so that no selection decision touched the test set:
 
-The final model selection therefore favoured the simpler additive model after held-out evidence showed that the boosted model's additional complexity did not provide a reliable advantage.
+| Block | Rows | Window | Positives | Rate |
+|---|---:|---|---:|---:|
+| FIT | 59,784 | 2026-01-01 → 2026-06-24 | 515 | 0.8614% |
+| CAL / VAL | 14,947 | 2026-06-24 → 2026-07-31 | 128 | 0.8564% |
+| TEST | 45,246 | 2026-08-01 → 2026-10-31 | 407 | 0.8995% |
+
+**Every model was fitted on FIT. Every selection decision — hyperparameters, model class, calibration method, feature importances — was made on CAL/VAL. TEST was read in exactly one cell, after everything was decided.**
+
+128 validation positives is thin, and the selection rule was built around that fact rather than in spite of it: it leans on a paired bootstrap, not on a fourth decimal place (§5.3).
+
+**Class imbalance: 113:1.** 118,927 negatives against 1,050 positives. This is the number that rules out accuracy as a metric — predicting "never disputed" scores 99.1% — and that justifies reporting PR-AUC and precision@k instead of ROC-AUC.
+
+**On the temporal split, stated honestly.** The weekly dispute-rate series shows no strong monotonic drift, and the two split rates (0.8604% / 0.8995%) are close. The temporal split is therefore justified as a **methodological precaution** against future-to-past leakage, not as a response to observed drift in this dataset. Overstating it would be dishonest.
 
 ---
 
-## 5. Calibration
+## 4. The feature contract
 
-Calibration was evaluated on temporally separated data.
+Source: `03_feature_knowability.csv` (46 rows × 5 cols), written **before the first feature was built**
 
-### Decile reliability
+| `model_role` | Count | What it is |
+|---|---:|---|
+| `numeric` | 23 | fitted |
+| `categorical` | 3 | fitted — `method`, `merchant_category`, `email_domain_type` |
+| `meta` | 3 | `payment_id`, `created_at`, `amount` — carried for traceability, never fitted |
+| `label` | 1 | `is_disputed` |
+| `excluded` | 16 | 12 tagged `forbidden` + 4 available but deliberately unused |
 
-| Model | ECE | Worst bin gap |
+**Fitted width: 26 features.** Derived from this artifact's `model_role` column, never hand-typed.
+
+### 4.1 Verification that the contract held
+
+| Check | Result |
+|---|---|
+| Forbidden columns present in `03_feature_matrix.csv` | **0** |
+| NaNs in the feature matrix | **0** |
+| Declared contract vs. built columns | **exact match** |
+| `03_train.csv` + `03_test.csv` = `03_feature_matrix.csv` | 74,731 + 45,246 = 119,977 ✓ |
+| Time-gating tripwire | **passed** — 39 stale customers found, every gated value strictly below the ungated truth |
+
+The tripwire deserves a sentence. The data spec plants 40 customers whose `prior_disputes` snapshot column is stale. The notebook found **39** — one short, consistent with notebook 1 having dropped 10 duplicate customers and 41 dispute rows. The assertion was deliberately written as `> 0` rather than `== 40`, because a hard equality would fail for a correct reason, and an assert that fails for correct reasons gets removed.
+
+### 4.2 The signal that was refused
+
+`delivery_status` shows a real, visible 3.1× spread:
+
+| `delivery_status` | Dispute rate | Volume |
 |---|---:|---:|
-| `main_hgb` | 0.00137 | +0.00795 |
-| `calibrated` | 0.00185 | **+0.01153** |
+| lost | 2.68% | 1,979 |
+| in_transit | 1.35% | 9,240 |
+| returned | 1.30% | 3,300 |
+| delivered | 0.86% | 51,474 |
 
-Nine of ten deciles track within approximately ±0.0022.
-
-The highest-risk decile predicts approximately **3.93%** against an observed **5.08%**, an under-prediction of approximately **1.15 percentage points**.
-
-The important conclusion is not that calibration improved every reliability metric. It did not.
-
-The defensible conclusion is:
-
-> **Sigmoid calibration corrected the probability scale from a maximum of approximately 0.474 to 0.334 while preserving ranking exactly.**
-
-The raw selected model's Brier score was 0.008535, fractionally better than its calibrated value of 0.008567. Therefore the project does not claim that calibration improved the selected model's Brier score.
+It is tagged `forbidden` and asserted out of the feature matrix, because it is only knowable weeks after the moment a routing decision has to be made. `01_cleaned_fulfilment.csv` is never even loaded by notebook 3 — the cheapest possible enforcement is a file that is never opened.
 
 ---
 
-## 6. Why PR-AUC is the headline ranking metric
+## 5. Model performance
 
-The test dispute base rate is approximately **0.9%**.
+Source: `05_model_comparison.csv` (4 rows × 17 cols), cross-checked with `np.allclose` against `04_test_metrics.csv`
 
-With 44,839 non-disputed transactions in the test set, ROC-AUC can look strong while saying relatively little about the precision achievable in the small portion of the queue that a risk team can actually review.
+### 5.1 The four probability columns, side by side
 
-ChargebackLens therefore emphasizes:
+| Column | What it is | PR-AUC | Lift@1% | P@5% | Brier | Brier skill | max p |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `proba_baseline` | LR, `class_weight='balanced'` (as prescribed) | 0.0842 | 17.2× | 0.0769 | 0.1404 | **−14.75** | 0.991 |
+| `proba_main` | HGB, tuned | 0.0812 | 15.5× | 0.0721 | 0.0086 | +0.0371 | 0.399 |
+| `proba_selected` | LR, unweighted, uncalibrated | 0.0872 | 16.2× | 0.0778 | 0.0085 | +0.0426 | 0.474 |
+| **`proba_calibrated`** | **the same LR + prefit sigmoid — deployed** | **0.0872** | **16.2×** | **0.0778** | **0.0086** | **+0.0390** | **0.334** |
 
-- PR-AUC
-- Precision at top 1%
-- Precision at top 5%
-- Lift
+Two things to read here.
 
-ROC-AUC was computed diagnostically but deliberately excluded from the headline metrics.
+**The last two rows have identical ranking metrics and different values.** That is the signature of a correct calibration — a strictly monotone map cannot change an ordering — and it is an explicit definition-of-done check rather than an observation made afterwards.
+
+**The skill-score column is the one that matters.** A constant predictor emitting the test base rate scores a Brier of `r(1−r) = 0.008914`. The prescribed baseline's 0.1404 is therefore **fifteen times worse than predicting nothing at all**, while ranking transactions perfectly respectably. That single number is the most legible statement of the `class_weight` defect documented in `FAILURES.md` §2.
+
+### 5.2 What the deployed model actually catches
+
+| | Value |
+|---|---|
+| Test set | 45,246 transactions, 407 disputes (0.8995%) |
+| PR-AUC | **0.0872** — 9.7× the base rate |
+| Top 1% of the queue (452 transactions) | **66 disputes caught**, precision 14.60%, **16.2× lift** |
+| Top 5% of the queue (2,262 transactions) | precision **7.78%**, recall **43.2%** |
+
+Recall at 5% is the number a risk team feels: **reviewing 5% of volume surfaces 43% of the disputes.**
+
+### 5.3 How the model was chosen
+
+The selection rule was written down before it was applied:
+
+1. Rank candidates by validation PR-AUC.
+2. Bootstrap the paired gap between the leader and each rival, 500 resamples. If the 95% CI contains zero, the rival joins the **tie set**.
+3. Break the tie on `(model-class simplicity, validation log-loss)`.
+
+Five candidates were evaluated. **All five landed in the tie set** — with 128 validation positives, nothing separates on ranking. So the tie-break did the real work, and validation log-loss is what split the two logistic variants: **0.0437 unweighted against 0.4478 weighted**, for models that rank identically. `LR_plain` was selected.
+
+Every configuration tried is exported to `04_hgb_search_results.csv` (16 rows) and `04_validation_leaderboard.csv` (5 rows), so the search is auditable rather than asserted.
+
+**The honest claim is not "the linear model wins."** A paired bootstrap on test puts the tuned-HGB-minus-deployed gap at −0.0060, CI [−0.0168, +0.0060] — not significant in either direction. The claim is: *on 407 test positives nothing separates these models, so a rule fixed in advance picked the simpler and better-calibrated one, and it was picked before test was read.*
+
+### 5.4 Why the signal in this dataset is additive
+
+The hyperparameter search over 16 HGB configurations selected **4 leaf nodes and `min_samples_leaf=400`**. Asked how much tree it wanted, the search said barely any — that is a stump ensemble, very nearly an additive model.
+
+Consistent with that, permutation importance ranks exactly the clean monotone spreads EDA found, with no interaction terms surfacing:
+
+| Feature | Importance | ± | Clears 2σ? |
+|---|---:|---:|---|
+| `log_amount` | 0.03075 | 0.00389 | ✅ |
+| `email_domain_type` | 0.02295 | 0.00282 | ✅ |
+| `phone_verified` | 0.02243 | 0.00312 | ✅ |
+| `merchant_category` | 0.01296 | 0.00183 | ✅ |
+| `method` | 0.01097 | 0.00175 | ✅ |
+| `has_prior_history` | 0.00307 | 0.00100 | ✅ |
+| `amount_vs_merchant_avg_ratio` | 0.00265 | 0.00093 | ✅ |
+| `delivery_sla_days_filled` | 0.00248 | 0.00105 | ✅ |
+
+**Eight of 26 features clear the 2σ screen. Eighteen do not, and six score ≤ 0.** None were dropped — a feature that measures as worthless *and was predicted to* is a finding worth reporting, and retro-fitting the feature set to the importances would have destroyed it.
+
+⚠️ **The app's reviewer note must filter on `informative == True`** before naming a driver, or it will confidently tell a reviewer that a shuffled-noise column drove the score.
+
+### 5.5 The ticket-size confound, settled
+
+EDA flagged that `emi` (2.44%), `netbanking` (1.45%) and `travel` (2.27%) all show elevated raw dispute rates — and that all three are high-ticket segments, so their rates might be `amount` wearing a category label. Shipping a logistic regression made this checkable:
+
+| Term | Coefficient | Odds ratio |
+|---|---:|---:|
+| `merchant_category_edtech` | −1.688 | 0.185 |
+| `email_domain_type_corporate` | −1.609 | 0.200 |
+| `email_domain_type_personal` | −1.410 | 0.244 |
+| `merchant_category_travel` | **−1.236** | 0.291 |
+| `log_amount` | **+1.127** | 3.086 |
+| `method_upi` | −1.006 | 0.366 |
+| `method_emi` | **−0.836** | 0.434 |
+
+**`travel` and `emi` both carry negative coefficients once `log_amount` is in the model.** Their raw rates were ticket size in disguise. This is the sharpest single observation in the modelling work.
+
+*(Coefficients are on one-hot columns fitted with L2 with no reference level dropped, so read them as relative contributions within a family, not as standalone log-odds.)*
+
+### 5.6 Six features measure as worthless, all of them explainable
+
+`account_age_implausible` (constant at 0 rows — a passed assertion, not a feature), `day_of_week`, `prior_disputes_before_this_txn`, `amount_vs_own_avg`, `txns_last_24h` and `checkout_latency_ms` all score ≤ 0.
+
+`ip_state_changed_from_prev_txn` scores **+0.000012 ± 0.000809** — rank 19 of 26, with a standard deviation sixty-seven times its mean, i.e. indistinguishable from a shuffled column. This was **predicted from first principles before the model was fitted**: the feature fires on 92.0% of rows conditional on having a prior transaction, against a ~93% expectation under independent draws. The generator assigns `ip_state` per transaction with no customer-level home state, so there is nothing to detect. It is a property of the synthetic data, not a modelling failure — on genuine payments data the feature would carry real signal.
 
 ---
 
-## 7. Operating policy
+## 6. Calibration
 
-The final policy uses two jointly optimized thresholds:
+Source: `05_calibration_curve.csv` (20 rows × 7 cols), cross-checked to **exact** float equality against `04_reliability_bins.csv`
 
-```text
-Allow → Step-up       0.024425
-Step-up → Review      0.082395
-```
+| Model | ECE | Worst decile gap |
+|---|---:|---:|
+| `main_hgb` (uncalibrated) | 0.00137 | +0.00795 |
+| `calibrated` (deployed) | 0.00185 | **+0.01153** (decile 9) |
 
-This produces:
+**Two things read honestly here, and both belong in the record.**
 
-| Band | Probability range | Transactions | Share | Disputes | Dispute rate | Lift vs base |
-|---|---|---:|---:|---:|---:|---:|
-| Allow | < 0.02443 | 42,152 | 93.2% | 204 | 0.484% | 0.54× |
-| Step-up | 0.02443 – 0.08240 | 2,786 | 6.2% | 151 | 5.42% | 6.03× |
-| Manual Review | ≥ 0.08240 | 308 | 0.7% | 52 | 16.88% | 18.77× |
+**First, nine of ten deciles track within ±0.0022.** The tenth does not: it predicts 3.93% against an observed 5.08%. The model **under-predicts exactly where the economics operates**, which makes every rupee figure below a floor rather than an estimate. The top-5% slice predicts 5.52% against an observed 7.78%.
 
-At the operating threshold used for the policy:
+**Second, the uncalibrated HGB has the *lower* ECE.** Sigmoid calibration slightly worsened aggregate reliability while preserving ranking exactly. So the defensible claim is not that calibration improved the model. It is that **calibration corrected the scale** — `max_proba` 0.474 → 0.334 — **at zero cost to ranking**. Say that, and not more.
 
-```text
-41,948 true negatives
- 2,891 false positives
-   204 false negatives
-   203 true positives
-```
-
-Precision is approximately **6.56%** and recall is approximately **49.88%**.
-
-Operationally, this means:
-
-> **2,891 legitimate customers see friction to catch 203 disputes.**
-
-That trade-off is evaluated economically rather than treated as a purely statistical classification decision.
+The honest headline from the calibration-method selection is that sigmoid beat doing nothing at all by 0.00004 in log-loss: **an unweighted logistic regression is already calibrated**, and the fitted sigmoid is close to the identity map. Calibration here is a check that passed, not a step that rescued anything.
 
 ---
 
-## 8. Binary policy versus three-band policy
+## 7. Economics — and the four things to read alongside every rupee figure
 
-The binary threshold sweep produces:
+Source: `05_economics_params.csv`, `05_policy_bands.csv`, `05_threshold_sweep.csv`, `05_segment_economics.csv`, `05_sensitivity_analysis.csv`, `05_censoring_audit.csv`
+
+### 7.0 The parameters and the cost model
+
+| Parameter | Value |
+|---|---:|
+| `dispute_fee` | ₹1,500 |
+| `ops_review_cost` | ₹300 |
+| `merchant_margin` | 0.18 |
+| `step_up_abandon_rate` | 0.25 |
+
+The three-band cost model adds **no fifth parameter**:
+
+| Action | If disputed | If not disputed |
+|---|---|---|
+| manual review | `ops_review_cost` | `ops_review_cost` |
+| step-up | 0 — deterred at the 3DS prompt | `amount × margin × abandon_rate` |
+| allow | `amount + dispute_fee + ops_review_cost` | 0 |
+
+The single assumption added is that a step-up deters the disputing party. It is stated in the function's docstring rather than buried. Adding a separate step-up prevention rate would have been more realistic and less auditable, and the sensitivity analysis already shows where the uncertainty concentrates.
+
+### 7.1 The headline, with its caveats attached
 
 | | Value |
 |---|---:|
-| Optimal threshold | approximately 0.024 |
-| Flagged | 3,168 (7.00%) |
-| Precision | 6.44% |
-| Recall | 50.12% |
-| Net savings | **₹1,080,993** |
+| Cost of allowing everything (the do-nothing baseline) | **₹30,69,547** |
+| Net savings under the deployed three-band policy | **₹11,99,620** |
+| As a share of exposure | **39.1%** |
 
-The three-band policy produces:
+**Caveat 1 — 72.2% of the label is post-snapshot.** `05_censoring_audit.csv`: **294 of 407 test positives were raised after the 2026-11-01 snapshot**, with the latest at 2027-01-26. Nearly three-quarters of the disputes this policy is scored against would not have been observable to an operator standing on the snapshot date. This does **not** bias the ranking — every feature is time-gated and the tripwire passed — but the label counts three months of future disputes, so the absolute rupee figures are scaled to an exposure a real merchant could not yet have measured. This is the largest single caveat in the project and it belongs here, next to the first rupee figure, not in a footnote.
 
-| | Binary | Three-band |
+**Caveat 2 — the number is a floor.** Per §6, the deployed model under-predicts in decile 9 by 1.15pp, so the expected-cost calculation understates the savings from flagging at high thresholds. This errs in the safe direction — a model over-predicting at the top would be the dangerous one — but it is a property of the number, not a disclaimer about it.
+
+**Caveat 3 — the conclusion is robust, the operating point is not.** See §7.4.
+
+**Caveat 4 — one band of one segment loses money.** See §7.5.
+
+### 7.2 The deployed policy
+
+Source: `05_policy_bands.csv`
+
+| Band | Range on `proba_calibrated` | n | Share | Disputes | Rate in band | Lift |
+|---|---|---:|---:|---:|---:|---:|
+| allow | < 0.02443 | 42,152 | 93.2% | 204 | 0.484% | 0.54× |
+| step-up | 0.02443 – 0.08240 | 2,786 | 6.2% | 151 | 5.42% | **6.03×** |
+| manual review | ≥ 0.08240 | 308 | 0.7% | 52 | 16.88% | **18.77×** |
+
+**The policy's cost, stated in customers rather than rupees.** At the allow/step-up threshold of 0.02443, the confusion matrix reads 41,948 TN · 2,891 FP · 204 FN · 203 TP — precision 6.56%, recall 49.88%. In plain language: **2,891 legitimate customers see friction in order to catch 203 disputes.** That is the honest framing of what a 6.2% step-up band means.
+
+### 7.3 Two thresholds beat one, measurably
+
+| | Binary (one threshold) | Three-band (two thresholds) |
 |---|---:|---:|
-| Net savings | ₹1,080,993 | **₹1,199,620** |
-| Improvement | — | **+₹118,627** |
+| Net savings | ₹10,80,993 | **₹11,99,620** |
+| Delta | — | **+₹1,18,627** |
 
-The three-band policy therefore provides measured economic justification for separating medium-risk transactions from high-risk transactions rather than treating all flagged transactions identically.
+The binary optimum sits at threshold 0.02405, flagging 3,168 transactions (7.00%) at 6.44% precision and 50.12% recall. **The curve is flat between roughly 0.024 and 0.042 — the argmax is not a precise point and should not be presented as one.**
 
----
+That ₹1,18,627 is the concrete justification for the three-band design, which until it was measured was an argument from how risk teams operate rather than a demonstrated gain.
 
-## 9. Economics assumptions
+### 7.4 Sensitivity — four parameters swept, not one
 
-The deployed policy uses:
+On `step_up_abandon_rate`, the parameter that matters most:
 
-```text
-Dispute fee             = ₹1,500
-Operations review cost  = ₹300
-Merchant margin         = 18%
-Step-up abandonment     = 25%
-```
-
-The cost model distinguishes:
-
-### Manual review
-
-```text
-₹300 operations cost
-```
-
-for both disputed and non-disputed transactions that enter review.
-
-### Step-up
-
-For a legitimate transaction:
-
-```text
-amount × merchant margin × abandonment rate
-```
-
-For a disputed transaction, the model assumes the step-up deters the disputing party and therefore avoids the dispute cost.
-
-### Allow
-
-For a disputed transaction:
-
-```text
-amount + dispute fee + operations cost
-```
-
-For a non-disputed transaction:
-
-```text
-₹0 incremental cost
-```
-
-The three-band policy is optimized jointly under these assumptions.
-
----
-
-## 10. Sensitivity analysis
-
-The most important sensitivity parameter is the step-up abandonment rate.
-
-| Step-up abandonment | Allow → Step-up | Step-up → Review | Reviews | Step-ups | Net savings |
+| `step_up_abandon_rate` | allow/step-up cut | step-up/review cut | n review | n step-up | Net savings |
 |---:|---:|---:|---:|---:|---:|
-| 10% | 0.01429 | 0.14601 | 41 | 6,255 | ₹1,811,639 |
-| 20% | 0.02434 | 0.11350 | 108 | 3,004 | ₹1,333,030 |
-| **25%** | **0.02443** | **0.08240** | **308** | **2,786** | **₹1,199,620** |
-| 30% | 0.04400 | 0.05388 | 794 | 428 | ₹1,098,732 |
-| 40% | 0.04441 | 0.04496 | 1,164 | 33 | ₹1,087,874 |
+| 0.10 | 0.01429 | 0.14601 | 41 | 6,255 | ₹18,11,639 |
+| 0.20 | 0.02434 | 0.11350 | 108 | 3,004 | ₹13,33,030 |
+| **0.25** | **0.02443** | **0.08240** | **308** | **2,786** | **₹11,99,620** |
+| 0.30 | 0.04400 | 0.05388 | 794 | 428 | ₹10,98,732 |
+| 0.40 | 0.04441 | 0.04496 | 1,164 | 33 | ₹10,87,874 |
 
-The conclusion is robust:
+**Net savings stay positive across the whole range** (₹10.9L–₹18.1L, a 1.7× spread) — the conclusion survives. **But the allow/step-up cut moves 0.0143 → 0.0444, a factor of 3.1.** As friction becomes more expensive, the policy shifts from mass step-up (6,255 transactions at rate 0.10) to targeted review (1,164 at rate 0.35): the two bands trade places.
 
-> Net savings remain positive across the tested abandonment range.
+**`step_up_abandon_rate` is the one parameter a merchant must measure rather than assume.** It is also the single highest-value measurement available to anyone deploying this.
 
-The operating point is not robust:
+⚠️ **A reading trap in `05_sensitivity_analysis.csv` that is not obvious from the table.** `dispute_fee` and `ops_review_cost` both appear inside `fn_cost = amount + dispute_fee + ops_review_cost`, so raising either also raises the **do-nothing baseline that net savings is measured against**. Their net-savings columns therefore rise even where the policy gets worse. At `ops_review_cost = 800` the net saving reads ₹12,69,369 against ₹11,99,620 at ₹300 — but the actual total cost rose by ₹1,33,751; the baseline simply rose by ₹2,03,500 more.
 
-```text
-Allow → Step-up:
-0.0143 → 0.0444
-```
+> **Net savings are comparable across `merchant_margin` and `step_up_abandon_rate` rows, and are *not* comparable across `dispute_fee` or `ops_review_cost` rows.** For those two, compare total cost or hold the baseline fixed.
 
-This is approximately a **3.1× movement**.
+Anyone reading that CSV without this note will conclude that paying reviewers more saves money.
 
-Therefore, `step_up_abandon_rate` should be measured from real merchant/customer behaviour before production deployment rather than treated as a permanent model constant.
+### 7.5 Segment economics — where this should not be deployed
 
-### Sensitivity-table caveat
+Source: `05_segment_economics.csv` (15 segments across amount bucket, merchant category and payment method, all above `MIN_SEGMENT_N = 300`)
 
-`dispute_fee` and `ops_review_cost` are included in the false-negative cost and therefore change the do-nothing baseline against which `net_savings_inr` is measured.
+A methodological point makes this finding real. Optimising a threshold *within* each segment guarantees a non-negative answer everywhere, because the do-nothing threshold is always in the grid — **that column alone cannot identify a bad segment.** So each segment is also evaluated at the **single global policy that would actually ship**, decomposed into its review and step-up halves, because a segment can be profitable overall while its review band loses money.
 
-Consequently, their net-savings values are **not directly comparable across rows**.
+Sorted by return per intervention:
 
-For example, at `ops_review_cost = 800`, the reported net saving is ₹1,269,369 versus ₹1,199,620 at ₹300, while actual total cost increased by ₹133,751.
-
-Net-savings comparisons are valid across the `merchant_margin` and `step_up_abandon_rate` rows, but not directly across `dispute_fee` or `ops_review_cost` rows unless the baseline is held fixed or total cost is compared.
-
----
-
-## 11. Segment economics
-
-Segment economics are evaluated under the **global deployed policy**.
-
-This matters because optimizing a threshold separately within each segment guarantees a non-negative result: the do-nothing policy is always available.
-
-ChargebackLens therefore evaluates:
-
-- Amount buckets
-- Merchant categories
-- Payment methods
-
-and decomposes the global result into review and step-up bands.
-
-Selected results:
-
-| Segment | n | Mean amount | Savings / intervention | Review band net | Reviews |
+| Segment | n | Mean amount | Savings per intervention | Review band net | n review |
 |---|---:|---:|---:|---:|---:|
 | `method = wallet` | 4,063 | ₹676 | ₹47 | **−₹300** | 1 |
 | `merchant_category = ticketing` | 4,561 | ₹825 | ₹50 | ₹1,890 | 25 |
 | `amount < ₹500` | 15,434 | ₹262 | ₹78 | ₹3,280 | 4 |
-| `merchant_category = travel` | 4,529 | ₹12,155 | ₹1,094 | ₹455,369 | 163 |
-| `method = emi` | 1,856 | ₹13,966 | ₹1,294 | ₹206,358 | 57 |
-| `amount > ₹10,000` | 2,288 | ₹18,859 | ₹1,434 | ₹417,582 | 128 |
+| `merchant_category = gaming` | 9,050 | ₹380 | ₹114 | ₹23,411 | 28 |
+| … | | | | | |
+| `merchant_category = travel` | 4,529 | ₹12,155 | ₹1,094 | ₹4,55,369 | 163 |
+| `method = emi` | 1,856 | ₹13,966 | ₹1,294 | ₹2,06,358 | 57 |
+| `amount > ₹10,000` | 2,288 | ₹18,859 | ₹1,434 | ₹4,17,582 | 128 |
 
-The key finding is:
+**The finding, stated precisely.** Manual review on `wallet` traffic nets **−₹300** — one review, zero catches. Meanwhile `amount > ₹10,000` returns **₹1,434 per intervention, 31× wallet's ₹47**.
 
-> **Manual review on wallet traffic nets −₹300 — one review, zero catches.**
+**And the recommendation that follows is sharper than "don't deploy on wallet."** Wallet's *step-up* band earns ₹9,779 — the friction pays for itself there; the human reviewer does not. So:
 
-However, the wallet segment as a whole is not necessarily unprofitable:
+> **Route the review queue by ticket size. On wallet and sub-₹500 traffic, keep the step-up band and skip manual review entirely.**
 
-```text
-Wallet step-up band net = ₹9,779
-Wallet review band net   = −₹300
-```
-
-Therefore the sharper recommendation is:
-
-> **Route the review queue by ticket size.**
-
-The economics are especially attractive for higher-ticket transactions:
-
-```text
-amount > ₹10,000
-Savings per intervention ≈ ₹1,434
-```
-
-compared with:
-
-```text
-wallet
-Savings per intervention ≈ ₹47
-```
-
-The higher-ticket intervention is therefore approximately **31×** as valuable per intervention.
+That is the same ticket-size axis the EDA predicted the finding would land on, now measured rather than expected.
 
 ---
 
-## 12. Censoring caveat
+## 8. What is deliberately not reported
 
-The largest limitation on the absolute economic figures is label censoring.
+**ROC-AUC.** All four probability columns score around 0.83, against PR-AUCs around 0.087. At a 0.8995% base rate, ROC-AUC is dominated by the 44,839-row true-negative mass and stays misleadingly high for a mediocre model. It was computed, printed once in a side cell with that one-line reason, and **not exported to any CSV** — notebook 4 enforced the same decision mechanically by naming its column `roc_auc_DIAGNOSTIC_ONLY`. It is absent from this document on purpose.
 
-The audit found:
+**Accuracy.** At 113:1, predicting "never disputed" scores 99.1%. The metric carries no information here.
 
-| Measure | Value |
-|---|---:|
-| Test positives | 407 |
-| Raised after snapshot | **294** |
-| Share after snapshot | **72.2%** |
-| `raised_at` values nulled by Notebook 1 | 4 |
-| Latest observed `raised_at` | 2027-01-26 03:45:10 |
+**Train-set performance as a result.** `04_train_predictions.csv` exists to measure the train/test **gap**, never to be reported as a result:
 
-Nearly three-quarters of the test positives would not have been observable to an operator standing on the declared snapshot date.
+| | Train PR-AUC | Test PR-AUC | Ratio |
+|---|---:|---:|---:|
+| `proba_baseline` | 0.0668 | 0.0842 | 0.79 |
+| `proba_main` (tuned HGB) | 0.1055 | 0.0812 | **1.30** |
+| `proba_calibrated` (deployed) | 0.0705 | 0.0872 | 0.81 |
 
-This does **not** bias the ranking because the feature pipeline is time-gated and its leakage tripwire passed.
-
-It does mean that the labels include roughly three months of future disputes. Therefore:
-
-> **The absolute rupee figures should be treated as a floor rather than a point estimate of what a real merchant could have measured at the snapshot date.**
-
-This caveat should be read alongside every economic conclusion.
+The *prescribed* HGB's ratio was **9.9** before it was retuned (`FAILURES.md` §1). At 1.30 the tuned version generalises; the deployed linear model sits at 0.81, scoring better on test than train, which at these positive counts is sampling noise plus a slightly higher test base rate.
 
 ---
 
-## 13. Application sample
+## 9. Known limitations
 
-The Streamlit Risk Queue uses:
-
-```text
-05_scored_test_sample.csv
-```
-
-with **5,000 rows**.
-
-The sample is intentionally stratified:
-
-```text
-4,406 Allow
-286 Step-up
-308 Manual Review
-83 Disputes
-```
-
-All 308 manual-review rows are retained, with the remaining rows sampled from the other actions.
-
-This is useful for demonstrating the queue, but it has an important implication:
-
-> **The sample's dispute rate is not the population dispute rate.**
-
-The application should not present the sample's observed dispute rate as if it were the test-set or population rate.
+1. **The data is synthetic**, and at least two findings are properties of the generator rather than of Indian payments: `ip_state` carries no customer-level home state (§5.6), and dispute labels were assigned without modelling a censoring horizon (§7.1).
+2. **72.2% of test positives are post-snapshot** — the single largest caveat, restated here so it appears in both places a reader might look.
+3. **128 validation positives** is a thin basis for model selection, which is why the selection rule uses a bootstrap tie set rather than raw ranking.
+4. **The economics assume a step-up deters the disputing party.** This is the one un-derived assumption in the cost model.
+5. **`account_age_implausible` fires on zero rows.** It is a passed assertion carried in the matrix as evidence the check ran, not a feature.
+6. **The app's review-queue sample is stratified, not random.** `05_scored_test_sample.csv` retains all 308 `manual_review` rows plus a seeded draw of 4,692 others (4,406 allow · 286 step-up · 308 review · 83 disputes). A uniform 5,000-row draw at a 0.9% base rate would have contained roughly 34 reviewable rows and made the demo queue look empty. **The sample's dispute rate is not the population rate and the app must not quote it as one** — it reweights by inverse sampling weight to present population-scale figures.
+7. **Two figures quoted in project documentation are computed outside a notebook cell** — the train/test gap table in §8 and the fitted `C` value. Both are traceable to exported CSVs but neither has a printing cell, which is a gap against the project's own traceability rule.
 
 ---
 
-## 14. Feature importance
+## 10. Traceability index
 
-Permutation importance is evaluated against average precision on the held-out validation block.
+Every headline number in this document, mapped to the artifact it was read from.
 
-The exported table contains:
-
-- `feature_name`
-- `importance`
-- `importance_std`
-- `rank`
-- `informative`
-
-The `informative` flag is a 2σ screen.
-
-Of the 26 features:
-
-- **18 fail the 2σ informative screen**
-- **6 have importance ≤ 0**
-
-Examples include:
-
-```text
-account_age_implausible
-day_of_week
-prior_disputes_before_this_txn
-amount_vs_own_avg
-txns_last_24h
-checkout_latency_ms
-```
-
-The substitute feature:
-
-```text
-ip_state_changed_from_prev_txn
-```
-
-has:
-
-```text
-importance = +0.000012
-importance_std = 0.000809
-rank = 19 / 26
-```
-
-This is consistent with the synthetic data generation process and should not be described as meaningful predictive signal.
-
-The application explanation layer must therefore use only features marked:
-
-```text
-informative == True
-```
-
----
-
-## 15. Definition of done
-
-The final evaluation passed all 10 checks:
-
-- [x] Deployed PR-AUC beats the prescribed baseline
-- [x] Calibration improves Brier versus the tuned HGB
-- [x] Brier skill score is positive
-- [x] Threshold grid is fully populated
-- [x] Two policy thresholds are correctly ordered
-- [x] Net savings are positive
-- [x] At least one segment contains an uneconomic review band
-- [x] Scored sample is ≤ 5,000 rows
-- [x] Scored sample contains the columns required by the application
-- [x] All nine evaluation exports were written and round-trip verified
-
-**10 of 10 passed.**
-
----
-
-## 16. What the metrics do and do not establish
-
-The results establish that, on the supplied temporally separated test data:
-
-1. The selected model ranks disputes meaningfully above the base rate.
-2. The calibrated probability has a usable scale for the economics layer.
-3. A three-band policy produces more realized savings than the evaluated binary policy under the current assumptions.
-4. Economic value varies substantially by transaction segment.
-5. The exact operating thresholds are sensitive to customer-friction assumptions.
-
-They do **not** establish production performance.
-
-The results should not be interpreted as:
-
-- A live fraud-loss forecast
-- A production authorization guarantee
-- A production ROI estimate
-- Evidence that the policy should be deployed unchanged
-- Evidence that the synthetic/pre-generated dataset represents a real merchant population
-
-The project is a **decision-support prototype** whose main claim is architectural:
-
-> **A calibrated risk probability becomes more useful when it is connected explicitly to operational policy and economic consequences.**
+| Number | Value | Source file |
+|---|---|---|
+| Base dispute rate | 0.8751% | `01_data_quality_log.csv`, `01_master_labelled.csv` |
+| Data-quality checks passing | 20 of 20 | `01_data_quality_log.csv` |
+| Class imbalance | 113:1 | `02_eda_segment_summary.csv` |
+| Segment dispute rates | see §5.5 | `02_eda_segment_summary.csv` (64 rows) |
+| Feature contract | 46 rows, 26 fitted | `03_feature_knowability.csv` |
+| Train / test rows and rates | 74,731 / 45,246 | `03_train.csv`, `03_test.csv` |
+| Hyperparameter search | 16 configs | `04_hgb_search_results.csv` |
+| Model selection evidence | 5 candidates | `04_validation_leaderboard.csv` |
+| Deployed model identity | `LR_plain` + sigmoid | `04_model_card.csv` |
+| Permutation importances | 26 rows, 2σ flag | `04_feature_importances.csv` |
+| Coefficients and odds ratios | 38 terms | `04_model_coefficients.csv` |
+| Fitted column order | 26 rows | `04_feature_columns.csv` |
+| PR-AUC, lift, Brier, skill score | see §5.1 | `05_model_comparison.csv` |
+| ECE and decile reliability | 0.00185 | `05_calibration_curve.csv` |
+| Threshold sweep, binary optimum | ₹10,80,993 | `05_threshold_sweep.csv` (101 rows) |
+| Operating thresholds and params | 0.02443 / 0.08240 | `05_economics_params.csv` |
+| **The deployed policy and its ₹11,99,620** | see §7.2 | **`05_policy_bands.csv`** |
+| Sensitivity across four parameters | 22 rows | `05_sensitivity_analysis.csv` |
+| Segment economics, wallet finding | −₹300 | `05_segment_economics.csv` |
+| Censoring audit | 294 / 407 | `05_censoring_audit.csv` |
+| App review-queue sample | 5,000 rows | `05_scored_test_sample.csv` |

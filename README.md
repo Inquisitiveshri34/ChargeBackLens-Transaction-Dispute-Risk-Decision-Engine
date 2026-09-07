@@ -1,1349 +1,200 @@
 # ChargebackLens
 
-### Transaction Dispute-Risk Decision Engine
+**A calibrated chargeback-risk scorer that answers a rupee question, not a yes/no one.**
 
-> **From probability to policy to economics.**
+Built for the Razorpay AI Buildathon, Track 02 — AI Risk Manager.
 
-[![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python)](https://www.python.org/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-App-FF4B4B?logo=streamlit)](https://streamlit.io/)
-[![scikit-learn](https://img.shields.io/badge/scikit--learn-ML-F7931E?logo=scikit-learn)](https://scikit-learn.org/)
-[![Plotly](https://img.shields.io/badge/Plotly-Visualization-3F4F75?logo=plotly)](https://plotly.com/python/)
-
-**Live Demo:** [https://chargebacklens-transaction-dispute-risk-decision-engine.streamlit.app/](https://chargebacklens-transaction-dispute-risk-decision-engine.streamlit.app/)
+🔗 **Live app:** `https://chargebacklens-transaction-dispute-risk-decision-engine.streamlit.app/`
+📄 **The numbers:** [`METRICS.md`](METRICS.md) · **What broke:** [`FAILURES.md`](FAILURES.md) · **What it refuses to do:** [`SCOPE.md`](SCOPE.md)
 
 ---
 
-## Overview
+## The problem
 
-ChargebackLens is a **chargeback/dispute-risk decision engine** designed to answer a practical question faced by payment and risk teams:
+A merchant loses money to a chargeback in three places at once: the disputed amount, a fixed dispute fee charged regardless of outcome, and the operational cost of responding. A fraud classifier addresses the first of those and ignores the other side of the ledger entirely — **stopping a legitimate customer also costs money**, because a customer pushed into extra verification has a real chance of abandoning the purchase.
 
-> **Given a transaction, what is the economically sensible action — allow it, step it up, or send it for manual review?**
+So "is this transaction risky?" is the wrong question. The one a merchant actually has is:
 
-The project goes beyond building a binary classifier.
+> Given this transaction, what is the **rupee-optimal action** — allow it, step it up, or send it to manual review — and how much confidence does that recommendation deserve?
 
-It combines:
-
-1. **Calibrated dispute-risk probability**
-2. **Operational risk policy**
-3. **Rupee-denominated economics**
-4. **Reviewer-oriented risk prioritization**
-5. **A narrowly scoped AI explanation layer**
-
-The central idea is simple:
-
-```text
-Transaction
-     ↓
-Risk Probability
-     ↓
-Operational Decision
-     ↓
-Economic Consequence
-     ↓
-Reviewer Explanation
-```
-
-ChargebackLens is intentionally built as a **decision-support system**, not as a production payment authorization system.
+ChargebackLens answers that one.
 
 ---
 
-## Why ChargebackLens?
+## What it does
 
-A chargeback creates multiple costs for a merchant:
+On 45,246 held-out transactions with a 0.8995% dispute rate:
 
-- The disputed transaction amount
-- A fixed dispute fee
-- Operational cost of handling the dispute
-
-However, intervention also has a cost.
-
-For example, forcing a legitimate customer through an additional verification step can cause abandonment. Sending every suspicious transaction to a human reviewer can also be more expensive than the dispute exposure it prevents.
-
-Therefore, the objective is not simply:
-
-> "Predict whether this transaction will be disputed."
-
-It is:
-
-> **"Estimate the probability of dispute accurately enough to make an economically justified decision."**
-
-This distinction drives the architecture of the entire project.
-
----
-
-# Objectives
-
-ChargebackLens has four primary objectives.
-
-### 1. Produce a calibrated probability
-
-The model should output a probability that can be interpreted as a probability of dispute, rather than merely an arbitrary ranking score.
-
-### 2. Convert probability into an operational policy
-
-The probability is translated into three decision bands:
-
-| Risk band | Operational action |
+| | |
 |---|---|
-| Low | **Allow** |
-| Medium | **Step-up** |
-| High | **Manual Review** |
+| **Net savings under the deployed policy** | **₹11,99,620** — 39.1% of a ₹30,69,547 exposure |
+| **Lift at the top 1% of the queue** | **16.2×** — 66 disputes caught in 452 reviewed |
+| **Recall at the top 5%** | **43.2%** — review 5% of volume, surface 43% of disputes |
+| **Calibration error** | 0.00185 across ten deciles |
 
-Two thresholds are used instead of a binary allow/block rule because different levels of risk warrant different amounts of customer friction and operational effort.
+The policy is three bands, not two, with both cut points optimised jointly:
 
-### 3. Evaluate decisions economically
+| Band | Score range | Share of volume | Dispute rate in band | Lift |
+|---|---|---:|---:|---:|
+| **allow** | < 0.02443 | 93.2% | 0.484% | 0.54× |
+| **step-up** (3DS friction) | 0.02443 – 0.08240 | 6.2% | 5.42% | **6.03×** |
+| **manual review** | ≥ 0.08240 | 0.7% | 16.88% | **18.77×** |
 
-The system estimates the cost and savings associated with intervention using explicit assumptions such as:
-
-- Dispute fee
-- Operations/review cost
-- Merchant margin
-- Step-up abandonment rate
-
-The goal is to identify the operating policy that maximizes estimated net savings.
-
-### 4. Make the result understandable to a reviewer
-
-The application is designed to surface the relevant risk signals behind a transaction-level decision rather than presenting an unexplained probability.
+The second threshold is worth **₹1,18,627** over the best single-threshold policy — which turns "two thresholds match how risk teams actually operate" from an argument into a measurement.
 
 ---
 
-# Current Status
+## What makes this different from a classifier
 
-## ✅ Completed
+**It reports where it shouldn't be deployed.** Segment economics under the shipping policy show that manual review on `wallet` traffic nets **−₹300** — one review, zero catches — while `amount > ₹10,000` returns ₹1,434 per intervention, **31× more**. The finding is sharper than "skip wallet": wallet's *step-up* band still earns ₹9,779. **Route the review queue by ticket size; keep the friction, drop the human reviewer, on low-ticket traffic.**
 
-- Data cleaning and validation
-- Transaction/customer/merchant/dispute processing
-- Label construction
-- Leakage-safe feature engineering
-- Feature knowability analysis
-- Temporal train/test splitting
-- Baseline model development
-- Main model development
-- Model selection
-- Probability calibration
-- Test-set evaluation
-- Threshold optimization
-- Three-band policy optimization
-- Economics analysis
-- Sensitivity analysis
-- Segment-level economics
-- Feature importance analysis
-- Frozen model/artifact export
-- Streamlit Risk Queue
-- Streamlit Economics interface
-- Streamlit Home page
-- Project documentation
+**It refuses visible signal.** `delivery_status` shows a genuine 3.1× spread — `lost` disputes at 2.68% against 0.86% for `delivered`. It is tagged `forbidden` and asserted out of the feature matrix, because it is only knowable weeks after the decision has to be made. The fulfilment table is never even loaded by the feature notebook. The EDA chart that shows this signal carries the word FORBIDDEN in its title, so the exclusion reads as a deliberate refusal rather than an oversight.
 
-## 🚧 Under Development
+**It quotes its headline number with four caveats attached, all measured, all exported.** 72.2% of the test label was raised after the declared snapshot date. The model under-predicts where the money is, so the figure is a floor. The thresholds move 3.1× under a parameter nobody has measured. And one band of one segment loses money. A submission that reported the savings without those four lines would be reporting a larger number and a smaller result.
 
-### Live Transaction Scoring
-
-The Streamlit interface for entering a new transaction and obtaining a live:
-
-```text
-Transaction Input
-       ↓
-Feature Construction
-       ↓
-Calibrated Probability
-       ↓
-Risk Band
-       ↓
-Economic Decision
-       ↓
-Reviewer Explanation
-```
-
-is the next application stage.
-
-The page is already present in the application as an **Under Development** surface.
+**It ships the model that won, not the one that was specified.** The prescribed gradient-boosted ensemble memorised its training set at a 9.9 train/test ratio, and after retuning still lost to a 26-feature logistic regression. The simpler model shipped. See [`FAILURES.md`](FAILURES.md).
 
 ---
 
-# Model Results
+## The app
 
-The final deployed scorer is an **unweighted Logistic Regression model with sigmoid calibration**.
+Three tabs, all reading frozen artifacts. The app never trains and never touches the raw data.
 
-The model was selected after comparing prescribed and tuned candidates on temporally separated validation data.
+**1 · Score a Transaction** — enter a transaction, get a calibrated probability, a recommended band, and a short reviewer note naming the actual drivers. The eight trailing features are exposed as manual-override sliders, because the app has no customer history at form-entry time; the caption says so plainly rather than pretending otherwise.
 
-### Headline test-set results
+**2 · Review Queue** — a risk-ranked queue over a 5,000-row scored sample. The sample is **stratified**, retaining all 308 `manual_review` rows plus a seeded draw of the rest, because a uniform draw at a 0.9% base rate would have shown roughly 34 reviewable transactions and made the queue look empty. The tab reweights by inverse sampling weight so that population-scale figures stay honest.
 
-| Metric | Result |
-|---|---:|
-| Features | **26** |
-| Base dispute rate | **0.8995%** |
-| Test PR-AUC | **0.0872** |
-| Precision @ top 1% | **14.6%** |
-| Lift @ top 1% | **16.2×** |
-| Precision @ top 5% | **7.78%** |
-| Brier score | **0.008567** |
-| Expected Calibration Error | **0.00185** |
+**3 · Economics Explorer** — move the four cost assumptions and watch the optimal thresholds move. This is where the sensitivity finding becomes tangible: net savings stay positive across the whole range, but the allow/step-up cut moves by a factor of 3.1.
 
-The dataset is highly imbalanced, with disputes representing roughly 0.9% of transactions.
-
-For this reason, **PR-AUC and precision at operational review capacities** are treated as the primary ranking metrics rather than ROC-AUC.
+The reviewer note calls the Anthropic API when `ANTHROPIC_API_KEY` is set and falls back to a deterministic template when it isn't. **The fallback is the default path and is fully functional** — scoring, the queue and the economics have zero external dependencies.
 
 ---
 
-# Why Calibration Matters
+## Quickstart
 
-The economics layer consumes probabilities directly.
-
-An arbitrary model score cannot safely be multiplied by a transaction amount and interpreted economically.
-
-ChargebackLens therefore calibrates the selected model before its probabilities are passed to the economics layer.
-
-The deployed model's maximum calibrated probability is approximately:
-
-```text
-0.334
+```bash
+git clone <your-repo-url>
+cd chargebacklens
+pip install -r requirements.txt
 ```
 
-The calibration results also show that the model is slightly conservative in the highest-risk region.
+**Run the app against the committed artifacts:**
 
-For example:
-
-```text
-Top 5% predicted risk:
-Predicted dispute rate ≈ 5.52%
-Observed dispute rate  ≈ 7.78%
+```bash
+streamlit run app/streamlit_app.py
 ```
 
-This means the resulting economic estimates should be interpreted as **conservative decision estimates**, rather than precise forecasts of future savings.
+It boots in under a second. No API key needed — the reviewer note uses its template fallback. To enable the LLM path:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...      # or set it in Streamlit's Secrets panel
+```
+
+**Reproduce the pipeline from scratch:**
+
+```bash
+jupyter lab
+# run notebooks/01 → 05 in order, top to bottom
+```
+
+Each notebook reads what the previous one wrote and ends by re-reading its own exports and asserting their shape. A stale artifact fails loudly at build time rather than confusingly three notebooks later.
+
+⚠️ **Pin `scikit-learn==1.7.2`.** That is the version that pickled the three model files. A version mismatch on `joblib.load()` is the single most common way a deployment that worked locally crashes in the cloud.
 
 ---
 
-# Model Selection
+## Repository layout
 
-ChargebackLens deliberately does not assume that a more complex model is automatically better.
-
-The project evaluated both linear and gradient-boosted approaches.
-
-The final deployed scorer is:
-
-```text
-Logistic Regression
-        +
-Sigmoid Calibration
 ```
-
-rather than the more complex HistGradientBoosting model.
-
-This decision was driven by held-out validation evidence.
-
-The tuned HGB model showed substantially greater train/test separation and did not outperform the selected linear model on the final test metrics.
-
-This is an intentional design decision:
-
-> **Model complexity is justified by measured generalization improvement, not by model sophistication alone.**
-
----
-
-# Data Pipeline
-
-The project uses five pre-generated source tables:
-
-```text
-transactions.csv
-customers.csv
-merchants.csv
-fulfilment.csv
-disputes.csv
-```
-
-The raw data is treated as a **read-only input contract**.
-
-The processing pipeline is:
-
-```text
-Raw CSVs
-   │
-   ▼
-Data Validation & Cleaning
-   │
-   ▼
-Label Construction
-   │
-   ▼
-Leakage-Safe Feature Engineering
-   │
-   ▼
-Temporal Train/Test Split
-   │
-   ▼
-Model Training
-   │
-   ▼
-Calibration
-   │
-   ▼
-Evaluation
-   │
-   ▼
-Economics & Threshold Optimization
-   │
-   ▼
-Frozen Artifacts
-   │
-   ▼
-Streamlit Application
-```
-
----
-
-# Leakage Prevention
-
-Chargeback prediction contains a particularly important leakage risk.
-
-Some information, especially fulfilment information such as:
-
-- delivery status
-- delivery timestamps
-
-may only become available after the point at which a dispute-risk decision would need to be made.
-
-ChargebackLens therefore uses an explicit **feature knowability** framework.
-
-Each feature is evaluated according to when it becomes knowable.
-
-The model is trained only on information that would be available at the decision point.
-
-The project also uses a **temporal split** rather than a random split:
-
-```text
-Earlier transactions
-       │
-       ▼
-Training data
-
-Later transactions
-       │
-       ▼
-Test data
-```
-
-The temporal boundary used in the modelling pipeline is:
-
-```text
-2026-08-01
-```
-
-This prevents future behaviour from being randomly mixed into the training data.
-
----
-
-# Economics Layer
-
-The economics layer is what turns ChargebackLens from a classification project into a decision engine.
-
-The baseline assumptions are:
-
-```text
-Dispute fee             = ₹1,500
-Operations review cost  = ₹300
-Merchant margin         = 18%
-Step-up abandonment     = 25%
-```
-
-The simplified cost model considers:
-
-### False negative
-
-A disputed transaction that was allowed:
-
-```text
-Transaction amount
-+ dispute fee
-+ operational cost
-```
-
-### False positive / step-up
-
-A legitimate transaction subjected to step-up:
-
-```text
-Transaction amount
-× merchant margin
-× abandonment rate
-```
-
-### True positive / manual review
-
-A correctly identified dispute sent for review:
-
-```text
-Operations review cost
-```
-
-### True negative
-
-A legitimate transaction that is allowed:
-
-```text
-₹0 incremental cost
-```
-
-These costs are used to evaluate candidate thresholds.
-
----
-
-# Three-Band Decision Policy
-
-ChargebackLens uses two thresholds instead of one.
-
-```text
-                 Risk Probability
-                       │
-       ┌───────────────┼───────────────────┐
-       │               │                   │
-       ▼               ▼                   ▼
-     ALLOW          STEP-UP          MANUAL REVIEW
-       │               │                   │
-    Low risk       Medium risk          High risk
-```
-
-At the current economic assumptions, the optimized operating points are approximately:
-
-```text
-Allow → Step-up       0.02443
-Step-up → Review      0.08240
-```
-
-The three-band policy produces approximately:
-
-```text
-Net savings: ₹1,199,620
-```
-
-compared with approximately:
-
-```text
-Binary policy: ₹1,080,993
-```
-
-The three-band structure therefore provides an estimated improvement of:
-
-```text
-₹118,627
-```
-
-over the binary policy under the model's current assumptions.
-
----
-
-# Sensitivity Analysis
-
-Economic decisions depend on assumptions.
-
-ChargebackLens therefore evaluates how the optimal policy changes when the step-up abandonment rate changes.
-
-| Step-up abandonment | Allow → Step-up | Step-up → Review | Reviews | Step-ups | Net savings |
-|---:|---:|---:|---:|---:|---:|
-| 10% | 0.01429 | 0.14601 | 41 | 6,255 | ₹1,811,639 |
-| 20% | 0.02434 | 0.11350 | 108 | 3,004 | ₹1,333,030 |
-| **25%** | **0.02443** | **0.08240** | **308** | **2,786** | **₹1,199,620** |
-| 30% | 0.04400 | 0.05388 | 794 | 428 | ₹1,098,732 |
-| 40% | 0.04441 | 0.04496 | 1,164 | 33 | ₹1,087,874 |
-
-The important takeaway is:
-
-> The conclusion that intervention creates positive value is reasonably robust, but the exact operating threshold is sensitive to the abandonment assumption.
-
-This is why the application exposes economics as an explicit decision layer rather than hiding the assumptions inside the model.
-
----
-
-# Segment-Level Economics
-
-A global policy can hide important differences between transaction segments.
-
-ChargebackLens therefore evaluates economics across:
-
-- Transaction amount buckets
-- Merchant categories
-- Payment methods
-
-One of the most important findings is that **manual review is not economically attractive for every segment**.
-
-For example:
-
-```text
-wallet traffic:
-Manual-review net = −₹300
-Reviews = 1
-Disputes caught = 0
-```
-
-At the other end of the spectrum:
-
-```text
-Transactions > ₹10,000:
-Savings per intervention ≈ ₹1,434
-```
-
-The resulting operational recommendation is not simply:
-
-> "Deploy the model everywhere."
-
-Instead:
-
-> **Route review capacity according to ticket size and segment economics.**
-
-For low-ticket and wallet traffic, step-up can still be economically useful while manual review may not be.
-
----
-
-# Streamlit Application
-
-The current Streamlit application is organized into four navigation surfaces:
-
-```text
-ChargebackLens
-│
-├── Home
-├── Risk Queue
-├── Economics
-└── Score Transaction
-```
-
----
-
-## 1. Home
-
-The Home page introduces:
-
-- What ChargebackLens is
-- The project objective
-- The decision workflow
-- The application surfaces
-- The current policy snapshot
-
-The intended mental model is:
-
-```text
-Transaction
-     ↓
-Risk
-     ↓
-Decision
-     ↓
-Economics
-     ↓
-Explanation
-```
-
----
-
-## 2. Risk Queue
-
-The Risk Queue provides a reviewer-oriented view of pre-scored transactions.
-
-Transactions are ranked by calibrated dispute probability.
-
-The queue allows a reviewer to inspect:
-
-- Payment ID
-- Transaction time
-- Amount
-- Merchant category
-- Payment method
-- Calibrated risk
-- Recommended action
-
-A selected transaction can then be inspected in greater detail.
-
-The application uses a stratified test-set sample rather than the complete test set so the demonstration contains sufficient high-risk transactions to make the queue useful.
-
-The sample contains:
-
-```text
-4,406 Allow
-286 Step-up
-308 Manual Review
-83 Disputes
-```
-
-**Important:** because the sample intentionally over-represents high-risk transactions, its observed dispute rate should not be interpreted as the population dispute rate.
-
----
-
-## 3. Economics
-
-The Economics interface is designed to answer:
-
-> **What happens to the decision if our assumptions change?**
-
-It surfaces:
-
-- Current policy thresholds
-- Policy-band volumes
-- Dispute rates by band
-- Threshold/savings relationships
-- Sensitivity to economic assumptions
-- Segment economics
-
-This allows a reviewer to see that the model's output and the business decision are separate layers.
-
----
-
-## 4. Score Transaction
-
-The live transaction scoring interface is currently:
-
-> **Under Development**
-
-The intended implementation will accept transaction-level inputs and perform:
-
-```text
-Raw transaction inputs
-        ↓
-Feature construction
-        ↓
-Feature-order validation
-        ↓
-Calibrated model
-        ↓
-Dispute probability
-        ↓
-Three-band policy
-        ↓
-Economic interpretation
-        ↓
-Reviewer explanation
-```
-
-This page will be connected only after the production scoring contract is finalized.
-
----
-
-# AI / LLM Component
-
-The project uses an LLM deliberately and narrowly.
-
-The LLM is **not responsible for**:
-
-- Model scoring
-- Feature selection
-- Threshold selection
-- Economic optimization
-- Risk classification
-
-Instead, the LLM is intended only for:
-
-> **Generating a concise reviewer note explaining an already-computed decision.**
-
-The architecture is:
-
-```text
-             Calibrated Model
-                    │
-                    ▼
-             Risk Probability
-                    │
-                    ▼
-             Policy Decision
-                    │
-          ┌─────────┴─────────┐
-          ▼                   ▼
-      Economics          Top Risk Signals
-                              │
-                              ▼
-                       Reviewer Note
-                              │
-                       ┌──────┴──────┐
-                       │             │
-                  Anthropic API   Deterministic
-                     available       fallback
-```
-
-If an API key is unavailable or the external service fails, the application can fall back to deterministic explanation text.
-
-This keeps the core decision system independent of an external LLM.
-
----
-
-# Architecture
-
-ChargebackLens intentionally separates the **offline modelling phase** from the **online application phase**.
-
-```text
-                    ┌──────────────────────┐
-                    │   Raw CSV datasets   │
-                    │     Read-only        │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                 ┌─────────────────────────┐
-                 │      Jupyter Phase       │
-                 │                         │
-                 │  Clean                   │
-                 │  Engineer                │
-                 │  Split                   │
-                 │  Train                   │
-                 │  Calibrate               │
-                 │  Evaluate                │
-                 │  Optimize economics      │
-                 └────────────┬────────────┘
-                              │
-                              ▼
-                 ┌─────────────────────────┐
-                 │   Frozen Artifacts      │
-                 │                         │
-                 │  Model                  │
-                 │  Features               │
-                 │  Predictions            │
-                 │  Thresholds              │
-                 │  Economics               │
-                 │  Importances             │
-                 └────────────┬────────────┘
-                              │
-                              ▼
-                 ┌─────────────────────────┐
-                 │     Streamlit App       │
-                 │                         │
-                 │  Home                   │
-                 │  Risk Queue             │
-                 │  Economics              │
-                 │  Score Transaction*     │
-                 └────────────┬────────────┘
-                              │
-                              ▼
-                    Optional LLM Layer
-                    Reviewer note only
-
-                    * currently under
-                      development
-```
-
-The Streamlit application does **not retrain the model**.
-
-The raw data is not required by the application.
-
-This keeps the deployed interface fast, reproducible, and auditable.
-
----
-
-# Project Structure
-
-```text
 chargebacklens/
-│
 ├── data/
-│   ├── raw/
-│   │   ├── transactions.csv
-│   │   ├── customers.csv
-│   │   ├── merchants.csv
-│   │   ├── fulfilment.csv
-│   │   └── disputes.csv
-│   │
-│   └── processed/
-│       ├── 01_cleaned_transactions.csv
-│       ├── 01_cleaned_customers.csv
-│       ├── 01_cleaned_merchants.csv
-│       ├── 01_cleaned_fulfilment.csv
-│       ├── 01_cleaned_disputes.csv
-│       ├── 01_master_labelled.csv
-│       ├── 01_data_quality_log.csv
-│       ├── 02_eda_segment_summary.csv
-│       ├── 03_feature_matrix.csv
-│       ├── 03_feature_knowability.csv
-│       ├── 03_train.csv
-│       ├── 03_test.csv
-│       ├── 04_train_predictions.csv
-│       ├── 04_test_predictions.csv
-│       ├── 04_feature_importances.csv
-│       ├── 05_model_comparison.csv
-│       ├── 05_calibration_curve.csv
-│       ├── 05_threshold_sweep.csv
-│       ├── 05_sensitivity_analysis.csv
-│       ├── 05_segment_economics.csv
-│       ├── 05_economics_params.csv
-│       ├── 05_scored_test_sample.csv
-│       │
-│       └── models/
-│           ├── baseline_model.joblib
-│           ├── main_model.joblib
-│           └── calibrated_model.joblib
-│
+│   ├── raw/                     # 5 pre-generated CSVs — read-only, never written to
+│   └── processed/               # every artifact, numbered by producing notebook
+│       └── models/              # the only 3 non-CSV files in the project
 ├── notebooks/
 │   ├── 01_data_cleaning_merging.ipynb
 │   ├── 02_eda.ipynb
 │   ├── 03_feature_engineering.ipynb
 │   ├── 04_model_building.ipynb
 │   └── 05_model_evaluation.ipynb
-│
 ├── app/
-│   ├── streamlit_app.py
-│   ├── scoring.py
-│   ├── economics.py
-│   └── explain.py
-│
-├── SCOPE.md
-├── METRICS.md
-├── FAILURES.md
-├── requirements.txt
-└── README.md
+│   ├── streamlit_app.py         # three tabs
+│   ├── scoring.py               # feature formulas + recommend_action — shared with nb 3 and 5
+│   ├── economics.py             # threshold sweep, re-run live on slider change
+│   └── explain.py               # Anthropic call + deterministic fallback
+├── SCOPE.md · METRICS.md · FAILURES.md · README.md
+└── requirements.txt
 ```
 
----
+**Every data artifact is a CSV.** The only binary files in the project are the three fitted model objects, because a scikit-learn pipeline is not tabular data. Everything else — cleaned tables, the feature matrix, predictions, thresholds, economics parameters, even the feature-knowability tags — is a CSV, specifically so that any artifact can be opened, diffed, and checked by eye without deserialising anything.
 
-# Notebook Pipeline
-
-The project is divided into five notebooks.
-
-### Notebook 01 — Data Cleaning & Merging
-
-Responsible for:
-
-- Loading source datasets
-- Schema validation
-- Data-quality checks
-- Deduplication
-- Foreign-key validation
-- Label construction
-- Master-table creation
-
-The cleaned master table contains:
-
-```text
-119,988 rows
-24 columns
-1,050 positive disputes
-≈0.875% dispute rate
-```
-
-All 20 defined data-quality checks passed.
+The `01_`, `02_`, `03_` prefixes are deliberate: sorted alphabetically, `data/processed/` reads as the exact build order.
 
 ---
 
-### Notebook 02 — Exploratory Data Analysis
+## How the pipeline works
 
-Responsible for:
+**The architecture is one decision:** everything expensive, stochastic, or requiring a held-out evaluation runs **offline, once, in a notebook**. Everything interactive runs **online, in the app**, against artifacts the notebook already froze. The app cannot train; the notebooks do not serve requests. Only named artifact files cross that seam.
 
-- Dispute-rate analysis
-- Segment analysis
-- Amount analysis
-- Merchant/category analysis
-- Payment-method analysis
-- Identifying potential confounds
+| Notebook | Does | Key output |
+|---|---|---|
+| **01 · Cleaning & merging** | 5 raw CSVs → one labelled master table; 14 cleaning rules, each with a found-vs-expected count | `01_master_labelled.csv` (119,988 × 24), base rate **0.8751%**, 20/20 quality checks matched |
+| **02 · EDA** | Every chart justifies a downstream decision, including one chart drawn specifically to justify an *exclusion* | `02_eda_segment_summary.csv`; 113:1 imbalance; `email_domain_type` (12× spread) and `phone_verified` (6.3×) identified as the strongest signals |
+| **03 · Feature engineering** | The feature contract is written to disk **before the first feature is built**, then three permanent asserts check the matrix against it | `03_feature_knowability.csv` (46 rows), `03_feature_matrix.csv`; temporal split at 2026-08-01; **0 forbidden columns, 0 NaNs**, time-gating tripwire passed |
+| **04 · Model building** | Fit what was specified, measure it, escalate on evidence, select under a rule written down in advance | 3 `.joblib` files + 10 evidence CSVs; deployed model **PR-AUC 0.0872, 16.2× lift@1%** |
+| **05 · Evaluation & economics** | Metrics first, then rupees — no threshold is chosen before the model's unglamorous baseline is on the page | 9 CSVs including the policy bands, sensitivity, segment economics and censoring audit; **10/10 definition-of-done checks passed** |
 
-EDA findings are exported into inspectable artifacts rather than being required by the application.
+Three disciplines run through all five:
 
----
-
-### Notebook 03 — Feature Engineering
-
-Responsible for:
-
-- Instant transaction features
-- Trailing behavioural features
-- Merchant-level features
-- Customer-level features
-- Temporal feature construction
-- Feature knowability checks
-- Temporal train/test split
-
-The final modelling contract contains:
-
-```text
-26 features
-23 numeric
-3 categorical
-```
+- **Round-trip verification.** Every export is immediately re-read and shape-asserted. A corrupted handoff becomes a loud failure at build time, not a confusing bug three notebooks later.
+- **Temporal splitting everywhere.** Train/test, and a further three-way split inside train so that no selection decision touches the test set. TEST is read in exactly one cell, after everything is decided.
+- **Deviations are logged, never silent.** Seven prescribed mechanics were replaced during this build. Each one is recorded with before/after numbers in `blockers.md` and summarised in `FAILURES.md`.
 
 ---
 
-### Notebook 04 — Model Building
+## The model
 
-Responsible for:
+**Deployed:** an unweighted `LogisticRegression` over 26 features, with a prefit sigmoid calibrator fitted on a held-out temporal block.
 
-- Baseline model
-- Main model
-- Hyperparameter search
-- Model comparison
-- Model selection
-- Probability calibration
-- Feature importance analysis
-- Model artifact export
+That is a simpler model than the design documents specified, and it is the honest result rather than a shortcut. The hyperparameter search over 16 gradient-boosting configurations selected **4 leaf nodes** — asked how much tree it wanted, it said barely any. **The signal in this dataset is additive**, and on this data a linear model is not a strawman; it is the appropriate model.
 
-The final deployed scorer is:
+The selection rule was written down before it was applied: rank by validation PR-AUC → form a tie set by paired bootstrap → break ties on model-class simplicity and log-loss. All five candidates tied on ranking (128 validation positives separate nothing), so the tie-break did the real work — and validation log-loss is what split the two logistic variants, 0.0437 unweighted against 0.4478 weighted.
 
-```text
-Unweighted Logistic Regression
-+
-Prefit Sigmoid Calibration
-```
+**The honest claim is not "the linear model wins."** On 407 test positives nothing separates these models. The claim is that a rule fixed in advance picked the simpler and better-calibrated one, and picked it before test was read.
 
 ---
 
-### Notebook 05 — Model Evaluation & Economics
+## What is deliberately not here
 
-Responsible for:
+**No ROC-AUC.** All four models score around 0.83, against PR-AUCs around 0.087. At a 0.9% base rate, ROC-AUC is dominated by the 44,839-row true-negative mass. It was computed once in a side cell and exported nowhere — the column is even named `roc_auc_DIAGNOSTIC_ONLY` so the decision is enforced mechanically rather than remembered.
 
-- PR-AUC
-- Precision@1%
-- Precision@5%
-- Brier score
-- Calibration analysis
-- Threshold optimization
-- Three-band policy optimization
-- Sensitivity analysis
-- Segment economics
-- Final scored application sample
+**No offense-capable functionality.** This is a hard architectural boundary, not a guideline. There is no evasion testing, no adversarial example generation, and no module anywhere in this repository that takes a *desired output* as an input. See [`SCOPE.md`](SCOPE.md) §3.
 
-The notebook does not retrain the model.
-
-It consumes the frozen model predictions produced by Notebook 04.
+**No LLM in the decision path.** The Anthropic API is called in exactly one place, for one task: turning an already-scored transaction into a short reviewer note. It does not score, threshold, or compute features — those have reproducibility requirements an LLM call cannot cleanly satisfy.
 
 ---
 
-# Reproducibility
+## Stack
 
-A single random seed is used throughout the modelling pipeline:
-
-```python
-RANDOM_SEED = 42
-```
-
-The project also uses a fixed temporal boundary:
-
-```python
-SPLIT_DATE = "2026-08-01"
-```
-
-The modelling workflow is therefore deterministic given the same source datasets and software environment.
+Python · pandas · NumPy · scikit-learn 1.7.2 · Plotly · Streamlit · Anthropic API (optional)
 
 ---
 
-# Technology Stack
+## Documentation
 
-| Layer | Technology |
+| File | What's in it |
 |---|---|
-| Language | Python |
-| Data manipulation | Pandas, NumPy |
-| Machine learning | scikit-learn |
-| Model persistence | joblib |
-| Visualization | Plotly |
-| Application | Streamlit |
-| Explanation layer | Anthropic API |
-| Development | Jupyter |
-| Data format | CSV |
-| Documentation | Markdown |
+| [`METRICS.md`](METRICS.md) | Every number in this README, with a traceability index mapping each one to the exported CSV cell it came from |
+| [`FAILURES.md`](FAILURES.md) | The three failures that would have shipped a wrong number without raising an error, with before/after tables |
+| [`SCOPE.md`](SCOPE.md) | What this system does, what it refuses to do, and the defense-only boundary |
+| `blockers.md` | The complete running log, all nine entries, including the five-minute library bugs |
+| `chargebacklens_hld.md` · `chargebacklens_lld.md` · `chargebacklens_dev_plan.md` | Architecture, module design, and the literal build order |
+| `data_cleaning_merging.md` · `eda.md` · `feature_engineering.md` · `model_building.md` · `model_evaluation.md` | One write-up per notebook, produced from executed cell outputs |
 
 ---
 
-# Key Design Decisions
+## Limitations, stated plainly
 
-## Temporal split instead of random split
+The dataset is synthetic, and at least two findings are properties of the generator rather than of Indian payments. **72.2% of the test label was raised after the declared snapshot date**, so the rupee figures are scaled to an exposure a real operator could not yet have measured. Model selection rests on 128 validation positives. And `step_up_abandon_rate` — the parameter the thresholds are most sensitive to — is assumed, not measured; it is the single highest-value thing a merchant deploying this could go and measure on real traffic.
 
-Random splitting can allow future behaviour to influence training data.
-
-ChargebackLens uses chronological separation to better approximate the real deployment scenario:
-
-```text
-Past → Train
-Future → Test
-```
-
----
-
-## PR-AUC instead of ROC-AUC as the headline metric
-
-The dispute rate is approximately 0.9%.
-
-At such an extreme class imbalance, ROC-AUC can provide an overly optimistic view of ranking performance.
-
-ChargebackLens therefore emphasizes:
-
-- PR-AUC
-- Precision@1%
-- Precision@5%
-- Lift
-
-These metrics are closer to the experience of a risk team operating with limited review capacity.
-
----
-
-## Calibration before economics
-
-Economic calculations consume the magnitude of the probability.
-
-Therefore:
-
-```text
-Model score
-     ↓
-Calibration
-     ↓
-Probability
-     ↓
-Economics
-```
-
-rather than:
-
-```text
-Model score
-     ↓
-Economics
-```
-
----
-
-## Three actions instead of binary blocking
-
-The system distinguishes:
-
-```text
-Allow
-Step-up
-Manual Review
-```
-
-because risk intervention has different costs depending on its severity.
-
----
-
-## Segment economics
-
-A single global threshold can hide segments where intervention is not worthwhile.
-
-ChargebackLens therefore evaluates economics across transaction and merchant segments before recommending deployment.
-
----
-
-## LLM as an explanation layer
-
-The LLM does not control the risk decision.
-
-This ensures that:
-
-- Scoring remains reproducible
-- Thresholds remain deterministic
-- Economics remain auditable
-- The application continues working without an API key
-
----
-
-# Known Limitations
-
-ChargebackLens is a **demo-scale decision-support system**, not a production payment authorization system.
-
-### 1. Historical evaluation
-
-The model is evaluated on the supplied historical dataset.
-
-It has not been validated on live production traffic.
-
-### 2. Synthetic/pre-generated data
-
-The project operates on the provided pre-generated CSV dataset and should not be interpreted as evidence of production performance.
-
-### 3. Censoring
-
-A substantial portion of test-set positive labels are raised after the modelling snapshot boundary.
-
-This means some late-period transactions may not yet have had sufficient time to reveal their final dispute outcome.
-
-### 4. Conservative economics
-
-The calibrated model under-predicts observed dispute frequency in the highest-risk decile.
-
-Consequently, economic savings estimates should be interpreted as conservative.
-
-### 5. Economic assumptions
-
-The optimal policy depends on assumptions such as:
-
-```text
-Dispute fee
-Review cost
-Merchant margin
-Step-up abandonment rate
-```
-
-These should be measured using real merchant operational data before production deployment.
-
-### 6. No live payment integration
-
-The current system does not connect to:
-
-- Payment gateways
-- Transaction event streams
-- Merchant systems
-- Production authorization infrastructure
-
-### 7. No automated retraining
-
-There is currently no:
-
-- Model registry
-- Automated retraining pipeline
-- Drift monitoring
-- Automated model refresh
-
-These are potential future production extensions.
-
-### 8. Live transaction scoring is not yet complete
-
-The Streamlit Risk Queue and Economics surfaces are implemented.
-
-The live transaction scoring interface is currently under development.
-
----
-
-# Security & Scope Boundary
-
-ChargebackLens is strictly a **defensive risk-management system**.
-
-It is designed to help identify transactions that may require additional scrutiny.
-
-The project does not implement:
-
-- Detection-evasion techniques
-- Adversarial transaction generation
-- Methods for bypassing risk controls
-- Offensive fraud tooling
-- Techniques intended to help malicious actors avoid detection
-
-This boundary is intentional and architectural.
-
----
-
-# Future Roadmap
-
-The next development stages are:
-
-### Phase 1 — Complete live transaction scoring
-
-```text
-Manual transaction input
-        ↓
-Feature construction
-        ↓
-Calibrated prediction
-        ↓
-Risk band
-        ↓
-Economic decision
-        ↓
-Reviewer explanation
-```
-
-### Phase 2 — Improve explanation quality
-
-Introduce transaction-specific explanations while retaining the deterministic fallback.
-
-### Phase 3 — Production-style artifact management
-
-Potentially replace flat-file artifacts with:
-
-```text
-Model Registry
-+
-Versioned Artifacts
-+
-Model Metadata
-```
-
-### Phase 4 — Real-time transaction integration
-
-A future production architecture could replace the local artifact interface with a transaction event stream while preserving the same conceptual separation:
-
-```text
-Event Stream
-     ↓
-Feature Service
-     ↓
-Model
-     ↓
-Policy
-     ↓
-Economics
-     ↓
-Action
-```
-
-### Phase 5 — Monitoring
-
-Potential production extensions include:
-
-- Data drift monitoring
-- Calibration monitoring
-- Performance monitoring
-- Segment-level monitoring
-- Threshold monitoring
-- Economic outcome monitoring
-
----
-
-# Running Locally
-
-Clone the repository:
-
-```bash
-git clone <YOUR_GITHUB_REPOSITORY_URL>
-cd chargebacklens
-```
-
-Create a virtual environment:
-
-```bash
-python -m venv .venv
-```
-
-Activate it.
-
-### macOS / Linux
-
-```bash
-source .venv/bin/activate
-```
-
-### Windows
-
-```bash
-.venv\Scripts\activate
-```
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-Run the Streamlit application:
-
-```bash
-streamlit run app/streamlit_app.py
-```
-
-The application should then open at:
-
-```text
-http://localhost:8501
-```
-
----
-
-# Project Documentation
-
-Additional technical documentation is available in:
-
-| File | Purpose |
-|---|---|
-| `SCOPE.md` | Project scope and boundaries |
-| `METRICS.md` | Model and economics results |
-| `FAILURES.md` | Development blockers, failures, and resolutions |
-| `notebooks/` | Complete modelling and evaluation pipeline |
-
----
-
-# Deployment
-
-The Streamlit application is intended to be deployed as a lightweight demo application.
-
-### Live application
-
-**[https://chargebacklens-transaction-dispute-risk-decision-engine.streamlit.app/](https://chargebacklens-transaction-dispute-risk-decision-engine.streamlit.app/)**
-
-The deployed application will expose the current Streamlit interface:
-
-```text
-Home
-│
-├── Risk Queue
-├── Economics
-└── Score Transaction
-      └── Under Development
-```
-
----
-
-# What Makes This Project Different?
-
-ChargebackLens is deliberately not framed as:
-
-> "I trained a model to predict chargebacks."
-
-Instead, it asks:
-
-> **"If the model says a transaction has a certain dispute probability, what should the business actually do about it?"**
-
-That requires three things beyond classification:
-
-```text
-Probability
-     +
-Policy
-     +
-Economics
-```
-
-The project therefore treats the model as one component of a larger decision system.
-
-The most important design principle is:
-
-> **A good risk model is not necessarily a good risk decision.**
-
-A useful system must connect model confidence to operational capacity, customer friction, and financial consequences.
-
----
-
-# Final Architecture at a Glance
-
-```text
-                     CHARGEBACKLENS
-                           │
-                           ▼
-                  ┌─────────────────┐
-                  │   Transaction   │
-                  └────────┬────────┘
-                           │
-                           ▼
-                  ┌─────────────────┐
-                  │ Calibrated Risk │
-                  │  Probability    │
-                  └────────┬────────┘
-                           │
-                           ▼
-              ┌─────────────────────────┐
-              │     Decision Policy     │
-              │                         │
-              │ Allow / Step-up /       │
-              │ Manual Review           │
-              └────────────┬────────────┘
-                           │
-                           ▼
-                  ┌─────────────────┐
-                  │    Economics    │
-                  │                 │
-                  │ Cost / Savings  │
-                  └────────┬────────┘
-                           │
-                           ▼
-                  ┌─────────────────┐
-                  │   Explanation   │
-                  │                 │
-                  │ Reviewer Note   │
-                  └─────────────────┘
-```
-
----
-
-## Built with
-
-**Python · Pandas · NumPy · scikit-learn · Plotly · Streamlit · Anthropic API**
-
----
-
-## Status
-
-**Current:** 🟢 Model + evaluation + economics + Risk Queue + Streamlit application
-
-**Next:** 🟡 Live transaction scoring
-
-**Deployment:** 🟡 Preparing public deployment
-
-**Demo:** [https://chargebacklens-transaction-dispute-risk-decision-engine.streamlit.app/](https://chargebacklens-transaction-dispute-risk-decision-engine.streamlit.app/)
+All four are quantified in [`METRICS.md`](METRICS.md) §7 and §9.
