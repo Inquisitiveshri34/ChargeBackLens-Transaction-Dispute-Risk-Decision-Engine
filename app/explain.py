@@ -102,13 +102,21 @@ def _describe(feature: str, level: str | None, raw_value) -> str:
         return f"{label} = {level}"
     if raw_value is None or (isinstance(raw_value, float) and np.isnan(raw_value)):
         return label
+    # Tab 2 passes the row's own value with level=None, so a categorical arrives
+    # here as its own level. Name it instead of trying to float() it.
+    if isinstance(raw_value, str):
+        return f"{label} = {raw_value}"
+    try:
+        numeric = float(raw_value)
+    except (TypeError, ValueError):
+        return f"{label} = {raw_value}"
     if feature.startswith(("is_", "has_")) or feature in ("phone_verified", "account_age_implausible"):
-        return f"{label}: {'yes' if float(raw_value) >= 0.5 else 'no'}"
+        return f"{label}: {'yes' if numeric >= 0.5 else 'no'}"
     if feature == "log_amount":
-        return f"{label} (Rs {np.expm1(float(raw_value)):,.0f})"
-    if float(raw_value) == int(float(raw_value)):
-        return f"{label} = {int(float(raw_value))}"
-    return f"{label} = {float(raw_value):,.3g}"
+        return f"{label} (Rs {np.expm1(numeric):,.0f})"
+    if numeric == int(numeric):
+        return f"{label} = {int(numeric)}"
+    return f"{label} = {numeric:,.3g}"
 
 
 def top_drivers(model, feature_row: pd.DataFrame, coefficients: pd.DataFrame,
