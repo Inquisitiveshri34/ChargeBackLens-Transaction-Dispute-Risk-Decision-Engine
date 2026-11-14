@@ -1,0 +1,415 @@
+@import "tailwindcss";
+
+/* Design tokens. `static` keeps every variable in the output so plain CSS
+   below can use them whether or not a utility class references them. */
+@theme static {
+  --color-page: #fbfbfd;
+  --color-ink: #111318;
+  --color-secondary: #3b4050;
+  --color-muted: #5b6170;
+  --color-hairline: #ecedf1;
+  --color-fill: #f0f1f5;
+  --color-fill-disabled: #f6f7f9;
+  --color-focus: #4f46e5;
+
+  --color-allow: #0b6444;
+  --color-allow-tint: #e4f5ec;
+  --color-allow-bar: #0e7a53;
+  --color-stepup: #8a4e00;
+  --color-stepup-tint: #fff1d6;
+  --color-review: #9e2019;
+  --color-review-tint: #fde7e5;
+  --color-review-bar: #b3261e;
+  --color-caution: #7a4b00;
+
+  --color-dark-allow: #7ee0b0;
+  --color-dark-stepup: #f5c469;
+  --color-dark-review: #ff9f97;
+  --color-dark-muted: #b4b9c8;
+  --color-nav-link: #e4e6ec;
+}
+
+@theme inline {
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-inter-tight);
+  --font-mono: var(--font-jetbrains-mono);
+}
+
+html {
+  scroll-padding-top: 96px;
+}
+
+body {
+  background: var(--color-page);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* On the ink navigation bar and the dark routing panel the indigo ring falls
+   under 3:1, so those surfaces use a lighter ring of the same hue. */
+.on-dark :focus-visible {
+  outline-color: #a5b4fc;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+/* ---------- layout ---------- */
+
+.wrap {
+  width: 100%;
+  max-width: 1216px; /* 1160 content + 28 padding each side */
+  margin-inline: auto;
+  padding-inline: 28px;
+}
+
+.page-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(38px, 6.5vw, 52px);
+  line-height: 1.05;
+  letter-spacing: -1.6px;
+}
+
+.section-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 22px;
+  line-height: 1.25;
+  letter-spacing: -0.3px;
+}
+
+.caption {
+  font-size: 15px;
+  color: var(--color-secondary);
+  max-width: 78ch;
+}
+
+.footnote {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-muted);
+  max-width: 92ch;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-secondary);
+}
+
+.hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-muted);
+}
+
+.num {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  border-radius: 28px;
+  padding: 40px;
+}
+
+@media (max-width: 520px) {
+  .panel {
+    padding: 28px 22px;
+  }
+}
+
+/* ---------- controls ---------- */
+
+.input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--color-fill);
+  color: var(--color-ink);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.input:disabled {
+  background: var(--color-fill-disabled);
+  color: var(--color-muted);
+  cursor: not-allowed;
+}
+
+select.input {
+  appearance: none;
+  padding-right: 40px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5l5 5 5-5' stroke='%23111318' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+}
+
+.slider {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--color-ink) var(--pct, 0%),
+    #d5d8e0 var(--pct, 0%)
+  );
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: -8px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--color-ink);
+}
+
+.slider::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #d5d8e0;
+}
+
+.slider::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-ink);
+}
+
+.slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--color-ink);
+}
+
+.check {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  accent-color: var(--color-ink);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 26px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pill-ink {
+  background: var(--color-ink);
+  color: #fff;
+}
+
+.pill-ink:disabled {
+  background: var(--color-muted);
+  cursor: progress;
+}
+
+.pill-quiet {
+  background: var(--color-fill);
+  color: var(--color-ink);
+}
+
+.link-btn {
+  min-height: 44px;
+  font-size: 15px;
+  font-weight: 500;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
+
+/* ---------- tables: the only place thin lines carry structure ---------- */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 12px 14px;
+  background: var(--color-page);
+  box-shadow: inset 0 -1px 0 var(--color-hairline);
+  color: var(--color-muted);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 0 14px;
+  height: 44px;
+  border-bottom: 1px solid var(--color-hairline);
+  white-space: nowrap;
+}
+
+.table .r {
+  text-align: right;
+}
+
+/* Eleven columns have to fit the 1160px content width. */
+.table-compact th,
+.table-compact td {
+  padding-inline: 8px;
+}
+
+/* ---------- motion ---------- */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes flow {
+  from {
+    left: -24%;
+  }
+  to {
+    left: 104%;
+  }
+}
+
+@keyframes pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  to {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+.rise {
+  animation: rise 720ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: var(--delay, 0ms);
+}
+
+.flow-chip {
+  position: absolute;
+  top: 50%;
+  translate: 0 -50%;
+  animation: flow var(--duration) linear infinite;
+  animation-delay: var(--offset);
+}
+
+.pulse-ring {
+  animation: pulse 2.4s ease-out infinite;
+}
+
+.grow-bar {
+  transform-origin: left center;
+}
+
+@supports (animation-timeline: view()) {
+  .reveal {
+    animation: rise linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 45%;
+  }
+
+  .grow-bar {
+    animation: grow linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 45%;
+  }
+}
+
+.lift {
+  transition: transform 160ms ease;
+}
+
+.lift:hover {
+  transform: translateY(-2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .reveal,
+  .grow-bar,
+  .flow-chip,
+  .pulse-ring {
+    animation: none;
+  }
+
+  /* With motion off the chips sit side by side instead of crossing the lane. */
+  .flow-track {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    height: auto;
+    min-height: 44px;
+  }
+
+  .flow-chip {
+    position: static;
+    translate: none;
+  }
+
+  .flow-line {
+    display: none;
+  }
+
+  .lift {
+    transition: none;
+  }
+
+  .lift:hover {
+    transform: none;
+  }
+}

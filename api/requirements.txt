@@ -1,0 +1,10 @@
+# Pinned to the versions the API test suite passes on, so a deploy installs
+# what was tested. scikit-learn must stay at the version that pickled the model.
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.14.1
+pandas==3.1.0
+numpy==2.3.5
+scikit-learn==1.7.2
+joblib==1.5.2
+anthropic==1.4.0

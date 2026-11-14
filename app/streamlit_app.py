@@ -458,6 +458,9 @@ with tab_econ:
     else:
         seg = ART["segments"].sort_values("savings_per_intervention")
 
+    # dispute_rate is a fraction (0.00763); the "%.3f%%" format below prints the
+    # number as given, so scale it to percent first or wallet reads 0.008%.
+    seg = seg.assign(dispute_rate=seg["dispute_rate"] * 100)
     st.dataframe(
         seg[["segment_type", "segment_value", "n", "dispute_rate", "mean_amount",
              "net_savings_at_global_policy", "savings_per_intervention",

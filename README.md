@@ -58,7 +58,9 @@ The second threshold is worth **₹1,18,627** over the best single-threshold pol
 
 ## The app
 
-Three tabs, all reading frozen artifacts. The app never trains and never touches the raw data.
+Three screens, all reading frozen artifacts. The app never trains and never touches the raw data.
+
+There are two front ends over the same Python modules. The web app (`web/`, Next.js) is the main one and talks to a small FastAPI service (`api/`). The original Streamlit app (`app/streamlit_app.py`) still works and is kept as a fallback. Every number in either UI is computed by `app/scoring.py`, `app/economics.py` and `app/explain.py`; the web front end does no model or economics maths of its own.
 
 **1 · Score a Transaction** — enter a transaction, get a calibrated probability, a recommended band, and a short reviewer note naming the actual drivers. The eight trailing features are exposed as manual-override sliders, because the app has no customer history at form-entry time; the caption says so plainly rather than pretending otherwise.
 
@@ -78,17 +80,63 @@ cd chargebacklens
 pip install -r requirements.txt
 ```
 
-**Run the app against the committed artifacts:**
+**Run the web app against the committed artifacts.** It has two halves; start each in its own terminal.
+
+```bash
+# 1. API, from the repo root (http://localhost:8000, docs at /docs)
+pip install -r api/requirements.txt
+uvicorn api.main:app --port 8000
+
+# 2. Front end (http://localhost:3000). Needs Node 20 or newer.
+cd web
+npm install
+npm run dev
+```
+
+The front end sends `/api/*` to the API through a server-side rewrite, so the browser only ever talks to one origin. Point it at a different API with `API_URL=https://your-api.example npm run dev`.
+
+The API loads the model and CSVs once at startup and checks the artifact contract. If `04_feature_columns.csv`, `04_model_card.csv` and the fitted model disagree, it prints the reason and exits instead of serving.
+
+**Or run the Streamlit fallback** (no Node needed):
 
 ```bash
 streamlit run app/streamlit_app.py
 ```
 
-It boots in under a second. No API key needed — the reviewer note uses its template fallback. To enable the LLM path:
+Neither path needs an API key — the reviewer note uses its template fallback and says so on screen. To enable the LLM path, set the key in the environment the API (or Streamlit) runs in:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...      # or set it in Streamlit's Secrets panel
 ```
+
+**Run the tests:**
+
+```bash
+pip install -r requirements-dev.txt
+pytest                                   # 60 API tests against the exported figures
+
+cd web
+npm run test:e2e                         # 57 browser checks; starts both halves if they are not running
+```
+
+The browser checks drive the Chrome already installed on the machine. Set `PYTHON=/path/to/python` if the Python with the API's dependencies is not the one on your `PATH`. They also write a full-page screenshot of every screen at 1400px and 390px to `web/e2e/screenshots/`.
+
+**Deploy.** Two services, API first because the front end needs its URL.
+
+1. **API on Render.** New → Blueprint → pick this repository → Apply. [`render.yaml`](render.yaml) holds every setting: the build and start commands, the free plan, the Singapore region and the `/api/health` check. Python 3.12 comes from `.python-version`. Optionally add `ANTHROPIC_API_KEY` under the service's Environment tab. When it is live, `https://<your-service>.onrender.com/api/health` returns `{"status":"ok"}`.
+2. **Front end on Vercel.** Add New → Project → import this repository. Set **Root Directory** to `web` and add the environment variable `API_URL` = the Render URL. The build stops with a clear message if `API_URL` is missing or malformed, and the value is fixed at build time, so redeploy after changing it.
+3. **Streamlit fallback** on Streamlit Community Cloud is unchanged: `requirements.txt` and `app/streamlit_app.py`.
+
+Any other Python host works for the API: install `api/requirements.txt` and run `uvicorn api.main:app --host 0.0.0.0 --port $PORT` from the repo root, shipping `app/`, `api/` and `data/processed/`. Any Node host works for the front end: `npm run build`, `npm run start`, with `API_URL` set at build time.
+
+What the code does for a hosted setup:
+
+- **A sleeping API.** Free hosts stop an idle service and take up to a minute to start it again. Every page pings `/api/health` when it opens so the API starts waking, and a request that gets a 502, 503 or 504 from the proxy is retried for about 75 seconds before any error is shown.
+- **Caching.** The API states its own cache policy on every response. Three reads of frozen artifacts (`/api/meta`, `/api/sensitivity`, `/api/lane-examples`) may be held by a CDN for five minutes; everything else is `no-store`.
+- **Pinned versions.** `api/requirements.txt` pins the versions the test suite passes on. Change a pin, run `pytest`, then deploy.
+- **Cost exposure.** With `ANTHROPIC_API_KEY` set, every score and every opened queue row makes one paid model call, and the API has no login or rate limit. Leave the key unset on a public deployment unless you accept that.
+
+The API reads `04_test_predictions.csv` for exact economics. Without that file it falls back to the reweighted 5,000-row sample and the Economics screen labels the result as an estimate.
 
 **Reproduce the pipeline from scratch:**
 
@@ -117,8 +165,19 @@ chargebacklens/
 │   ├── 03_feature_engineering.ipynb
 │   ├── 04_model_building.ipynb
 │   └── 05_model_evaluation.ipynb
+├── api/                         # FastAPI service over the app/ modules
+│   ├── main.py                  # routes, startup contract check, error shapes
+│   ├── artifacts.py             # loads the model and CSVs once
+│   ├── schemas.py               # request validation, same ranges as the form
+│   └── service.py               # what each endpoint returns
+├── web/                         # Next.js front end (App Router, TypeScript, Tailwind)
+│   ├── app/                     # routes: /, /score, /queue, /economics
+│   ├── components/              # screens, form fields, hand-built SVG chart
+│   ├── lib/                     # API client and display formatting
+│   └── e2e/                     # Playwright checks
+├── tests/                       # pytest suite for the API
 ├── app/
-│   ├── streamlit_app.py         # three tabs
+│   ├── streamlit_app.py         # three tabs (fallback UI)
 │   ├── scoring.py               # feature formulas + recommend_action — shared with nb 3 and 5
 │   ├── economics.py             # threshold sweep, re-run live on slider change
 │   └── explain.py               # Anthropic call + deterministic fallback
@@ -176,7 +235,7 @@ The selection rule was written down before it was applied: rank by validation PR
 
 ## Stack
 
-Python · pandas · NumPy · scikit-learn 1.7.2 · Plotly · Streamlit · Anthropic API (optional)
+Python · pandas · NumPy · scikit-learn 1.7.2 · FastAPI · Next.js · TypeScript · Tailwind CSS · Playwright · Plotly · Streamlit · Anthropic API (optional)
 
 ---
 
@@ -187,6 +246,7 @@ Python · pandas · NumPy · scikit-learn 1.7.2 · Plotly · Streamlit · Anthro
 | [`METRICS.md`](METRICS.md) | Every number in this README, with a traceability index mapping each one to the exported CSV cell it came from |
 | [`FAILURES.md`](FAILURES.md) | The three failures that would have shipped a wrong number without raising an error, with before/after tables |
 | [`SCOPE.md`](SCOPE.md) | What this system does, what it refuses to do, and the defense-only boundary |
+| [`docs/ui_rebuild_deviations.md`](docs/ui_rebuild_deviations.md) | Where the web UI and API differ from the rebuild brief, and why |
 | `blockers.md` | The complete running log, all nine entries, including the five-minute library bugs |
 | `chargebacklens_hld.md` · `chargebacklens_lld.md` · `chargebacklens_dev_plan.md` | Architecture, module design, and the literal build order |
 | `data_cleaning_merging.md` · `eda.md` · `feature_engineering.md` · `model_building.md` · `model_evaluation.md` | One write-up per notebook, produced from executed cell outputs |
